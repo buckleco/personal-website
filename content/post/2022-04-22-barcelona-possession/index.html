@@ -1,0 +1,250 @@
+---
+title: "Analysis of Barcelona possession"
+author: "Conor Buckley"
+date: 2022-04-22
+categories: ["R", "Chart"]
+tags: ["R", "plot", "ggplot2", "soccer"]
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+
+
+<p>The freely available Statsbomb event level soccer data includes 520 Barcelona La Liga games during the period from 2004 to 2021. Barcelona are famous for their ability to out-possess nearly every team they play against, so I thought it would be interesting to dig into the data and produce a few charts to demonstrate Barcelona’s possession dominance.</p>
+<p>Firstly, I load the required libraries for this analysis.</p>
+<pre class="r"><code># Load libraries required for this post
+# library(StatsBombR)
+library(tidyverse)
+library(gridExtra)
+library(grid)
+library(scales)</code></pre>
+<p>Next, I set the color variables for the plots.</p>
+<pre class="r"><code># Set the colour variables for the plots
+barca_team_colour &lt;- &quot;#FF832B&quot; # orange
+opp_team_colour &lt;- &quot;#9A114F&quot; # magenta 70
+non_event_colour &lt;- &quot;#BBBBBB&quot; # grey</code></pre>
+<p>The StatsBomb data that I use has already been processed to a certain extent. I load the required CSV files from my GitHub repo. Please see <a href="../2022-03-18-get-data-from-statsbombr/">this post</a>, which outlines how I originally pulled the StatsBomb data using the ‘StatsBombR’ package.</p>
+<pre class="r"><code># get the base data containing possession times for each of the 520 Barcelona games
+# 7 variables with 1,560 observations
+plotData520_tib &lt;- read_csv(&quot;https://raw.githubusercontent.com/buckleco/Portfolio_Data/main/Barcelona_Possession_Data.csv&quot;)
+
+# Get the high level details about each match
+# 42 variables with 520 observations
+matches_ll &lt;- read_csv(&quot;https://raw.githubusercontent.com/buckleco/Portfolio_Data/main/Barcelona_Matches.csv&quot;)</code></pre>
+<p>Even though the data is in good shape, I still need to do some further processing, such as changing variable types, creating new variables and reordering the data.</p>
+<pre class="r"><code># Sort the data, so that it is Barcelona, Non Event and Opposition
+plotData520_tib &lt;- plotData520_tib %&gt;%
+  mutate(across(game_id, as.integer)) %&gt;% # change from char to int
+  mutate(event_owner = case_when(
+    possession_team.name == &quot;Barcelona&quot; ~ &quot;Barcelona&quot;,
+    possession_team.name == &quot;NonEvent&quot; ~ &quot;Ball not in play&quot;,
+    TRUE ~ &quot;Opposition&quot;
+  )) %&gt;%
+  arrange(game_id, event_owner) %&gt;%
+  mutate(across(game_id, as.factor)) %&gt;% # change from int to factor
+  mutate(across(event_owner, as.factor)) %&gt;% # change from char to factor
+  mutate(game_id = fct_rev(game_id)) %&gt;%
+  mutate(event_owner = fct_relevel(event_owner, &quot;Barcelona&quot;, &quot;Opposition&quot;, &quot;Ball not in play&quot;))</code></pre>
+<p>I create a modified dataset to include the percentage of time per game each team is in possession. Also, I account for the percentage of time when the ball is not in play. For a given game, the sum of the possession for each team plus the percent of time the ball is out of play equals 100%.</p>
+<pre class="r"><code># Modify the dataset to include the percentage of time in possession
+plotData520_tib_1 &lt;- plotData520_tib %&gt;%
+  group_by(game_id) %&gt;%
+  summarise(
+    perc_poss_time = (tot_poss_time / sum(tot_poss_time)),
+    tot_poss_time = tot_poss_time,
+    num_poss_count = num_poss_count,
+    event_owner = event_owner,
+    poss_team_name = possession_team.name
+  ) %&gt;%
+  ungroup() # %&gt;%</code></pre>
+<p>I use this data to create a boxplot chart to examine how much possession Barcelona have in their games compared to the possession of their opponents. I also include the pecentage of time the ball is not in play per game.</p>
+<pre class="r"><code># Boxplot chart using average per game possession time
+plot520_box &lt;- ggplot(plotData520_tib_1, aes(event_owner, perc_poss_time)) +
+  geom_boxplot(aes(fill = event_owner)) +
+  scale_fill_manual(values = c(barca_team_colour, opp_team_colour, non_event_colour)) +
+  scale_y_continuous(labels = scales::percent_format(accuracy = 1)) +
+  theme(
+    legend.key = element_rect(fill = &quot;white&quot;), # background of legend icon
+  ) +
+  labs(
+    title = &quot;Barcelona Possession vs Opposition&quot;,
+    x = &quot;Possession Team&quot;, y = &quot;Time in Possession (%)&quot;, fill = &quot;&quot;
+  )
+plot520_box</code></pre>
+<p><img src="{{< blogdown/postref >}}index_files/figure-html/unnamed-chunk-6-1.png" width="672" /></p>
+<p>Barcelona dominate their opponents when it comes to time in possession, with the lowest outlier of possession for Barcelona above the 75th percentile (the top of the box) of possession for the opponent.<br />
+I use the same data to create a scatterplot chart, which again uses the percentage of time in possession per game, but, additionally, I plot it against the count of possessions in a game.</p>
+<pre class="r"><code># Scatterplot chart using average per game possession time
+plot520_scat &lt;- ggplot(plotData520_tib_1, aes(perc_poss_time, num_poss_count)) +
+  geom_point(aes(col = event_owner)) +
+  scale_colour_manual(values = c(barca_team_colour, opp_team_colour, non_event_colour)) +
+  scale_x_continuous(labels = scales::percent_format(accuracy = 1)) +
+  theme(
+    legend.key = element_rect(fill = &quot;white&quot;), # background of legend icon
+  ) +
+  labs(
+    title = &quot;Barcelona Possession vs Opposition&quot;,
+    x = &quot;Time in Possession (%)&quot;, y = &quot;Number of Possessions&quot;, color = &quot;Possession Team&quot;
+  )
+plot520_scat</code></pre>
+<p><img src="{{< blogdown/postref >}}index_files/figure-html/unnamed-chunk-7-1.png" width="672" /></p>
+<p>A very clear pattern can be seen, where Barcelona have more possesion than their opponents and regularly have more possessions too. This makes sense: the greater amount of individual possessions in a game, generally the greater total possesion overall. This chart interestingly demonstrates that the number of times the ball goes out of play is noticeably greater than the number of possessions for a given team. Although, these tend to be shorter in duration than an individual possession for a given team, and for Barcelona in particular.</p>
+<p>The next thing I look at is how Barcelona stack up against specific opponents. In order to do this I need to create an updated dataset. Firstly, I pull the names of all the opponents from my original dataset. Then, using the dataset from the charts above and this list of opponents, I create a dataset that ultimately contains three rows for each opponent detailing the average possession time for that team, Barcelona and the average time the ball was not in play.</p>
+<pre class="r"><code># Refine dataset for dot plot by specific opponents
+# First, make opposition table per game id
+plotData520_tib_3 &lt;- plotData520_tib %&gt;%
+  filter(event_owner == &quot;Opposition&quot;) %&gt;%
+  select(game_id, possession_team.name)
+
+# Opponents, avg possession vs that specific opponent
+# and the event owner flag with 3 states: Barcelona, non event, Opponent
+plotData520_tib_4 &lt;- plotData520_tib_1 %&gt;%
+  left_join(plotData520_tib_3) %&gt;% # add the opposition team names
+  rename(opp_team_name = possession_team.name) %&gt;%
+  group_by(opp_team_name, event_owner) %&gt;%
+  summarise(avg_poss_time = mean(perc_poss_time)) %&gt;%
+  ungroup() %&gt;%
+  mutate(opp_team_name = as_factor(opp_team_name))</code></pre>
+<p>An appropriate type of chart to display this data is a dot plot. However, I ‘flip’ the chart so that it displays vertically. By doing this, I put the opponent team names on the y-axis, which makes the chart much easier to read. Also, the chart is ordered by Barcelona average possession, starting with the most at the top.</p>
+<pre class="r"><code># Dot plot charting Opp avg poss vs Barca avg poss per opp team
+plot520_dot_opp &lt;- ggplot(
+  plotData520_tib_4,
+  aes(
+    x = fct_reorder2(opp_team_name,
+      rev(event_owner),
+      avg_poss_time,
+      .desc = FALSE
+    ),
+    y = avg_poss_time
+  )
+) +
+  geom_point(aes(col = event_owner), size = 3) + # Draw points
+  geom_segment(aes(
+    x = opp_team_name, xend = opp_team_name,
+    y = min(avg_poss_time - 0.05), yend = max(avg_poss_time + 0.025)
+  ),
+  linetype = &quot;dashed&quot;, size = 0.1
+  ) + # Draw dashed lines
+  scale_colour_manual(values = c(barca_team_colour, opp_team_colour, non_event_colour)) +
+  scale_y_continuous(
+    labels = scales::percent_format(accuracy = 1),
+    expand = c(0, 0)
+  ) +
+  theme(
+    legend.key = element_rect(fill = &quot;white&quot;), # background of legend icon
+    panel.grid.major = element_blank(),
+    panel.grid.major.x = element_line(color = non_event_colour),
+    panel.grid.minor = element_blank(),
+    panel.background = element_blank()
+  ) +
+  labs(
+    title = &quot;Barcelona average possession vs La Liga opponent&quot;,
+    x = &quot;Opponents&quot;, y = &quot;Average Possession (%)&quot;, color = &quot;&quot;
+  ) +
+  coord_flip()
+plot520_dot_opp</code></pre>
+<p><img src="{{< blogdown/postref >}}index_files/figure-html/unnamed-chunk-9-1.png" width="672" /></p>
+<p>It can easily be seen that Barcelona out-possess all of their La Liga rivals. When Barcelona have less possession, it is due to the ball being out of play for longer, rather than their opponents having more of the ball. Perhaps unsurprisingly, Real Madrid are the opponent who average the most possession against Barcelona.</p>
+<p>The next thing I am interested in is how possession changes through time. Therefore, using my base dataset, I construct a tibble for this purpose, by adding in features to identify the match date, season id and season name. Then I aggregate the possession percentages for each season.</p>
+<pre class="r"><code># Refine dataset for dot plot by season, for all 520 games (i.e. not aggregated avg)
+plotData520_tib_5 &lt;- plotData520_tib %&gt;%
+  left_join(matches_ll %&gt;%
+    select(match_id, match_date, season.season_id, season.season_name)) %&gt;%
+  group_by(game_id) %&gt;%
+  summarise(
+    perc_poss_time = (tot_poss_time / sum(tot_poss_time)),
+    avg_poss_time = avg_poss_time,
+    tot_poss_time = tot_poss_time,
+    num_poss_count = num_poss_count,
+    event_owner = event_owner,
+    poss_team_name = possession_team.name,
+    season_id = season.season_id,
+    season_name = season.season_name
+  ) %&gt;%
+  ungroup() %&gt;%
+  mutate(season_id = fct_reorder(as_factor(season_id), season_id, .desc = FALSE))
+
+# Using the plotData520_tib_5 dataset, reduce it down to averages per season,
+# i.e. aggregated, not all games displayed
+# Note, I do this step separately as I need v5 later on
+plotData520_tib_6 &lt;- plotData520_tib_5 %&gt;%
+  group_by(season_id, season_name, event_owner) %&gt;%
+  summarise(avg_poss_time = mean(perc_poss_time)) %&gt;%
+  ungroup()</code></pre>
+<p>Again, a dot plot is a good choice for what I want to show here.</p>
+<pre class="r"><code># Dot plot charting season avg poss for Barca avg poss per opp team
+plot520_dot_season &lt;- ggplot(
+  plotData520_tib_6,
+  aes(
+    x = season_name,
+    y = avg_poss_time
+  )
+) +
+  geom_point(aes(col = event_owner), size = 3) + # Draw points
+  geom_segment(aes(
+    x = season_name, xend = season_name,
+    y = min(avg_poss_time - 0.05), yend = max(avg_poss_time + 0.05)
+  ),
+  linetype = &quot;dashed&quot;, size = 0.1
+  ) + # Draw dashed lines
+  scale_colour_manual(values = c(barca_team_colour, opp_team_colour, non_event_colour)) +
+  scale_y_continuous(
+    labels = scales::percent_format(accuracy = 1),
+    expand = c(0, 0)
+  ) +
+  theme(
+    legend.key = element_rect(fill = &quot;white&quot;), # background of legend icon
+    panel.grid.major = element_blank(),
+    panel.grid.major.x = element_line(color = non_event_colour),
+    panel.grid.minor = element_blank(),
+    panel.background = element_blank()
+  ) +
+  labs(
+    title = &quot;Barcelona average possession vs opponents, per season&quot;,
+    x = &quot;Season&quot;, y = &quot;Average Possession (%)&quot;, color = &quot;&quot;
+  ) +
+  coord_flip()
+plot520_dot_season</code></pre>
+<p><img src="{{< blogdown/postref >}}index_files/figure-html/unnamed-chunk-11-1.png" width="672" /></p>
+<p>Looking at the average game possession for Barcelona across all the seasons available in the dataset (2004 to 2021), the 2010/2011 season stands out as a peak. This season was a very successful one for Barcelona, when they won La Liga and the Champions League. The coach Pep Guardiola left in 2012 and the average possession numbers declined in the following years.</p>
+<p>The final thing I want to look at is the average time Barcelona keep the ball, during a possession, compared to their opponents. I create a quick tibble to do this, grouping the data by season and taking the average time of each possession.</p>
+<pre class="r"><code># Using the plotData520_tib_5 dataset get the avg time per possession
+plotData520_tib_7 &lt;- plotData520_tib_5 %&gt;%
+  group_by(season_id, season_name, event_owner) %&gt;%
+  summarise(avg_poss_time = mean(avg_poss_time)) %&gt;%
+  ungroup()</code></pre>
+<p>Again, a dot plot is useful to display this data.</p>
+<pre class="r"><code># Dot plot charting season avg time per possession
+plot520_dot_poss_time &lt;- ggplot(
+  plotData520_tib_7,
+  aes(
+    x = season_name,
+    y = avg_poss_time
+  )
+) +
+  geom_point(aes(col = event_owner), size = 3) + # Draw points
+  geom_segment(aes(
+    x = season_name, xend = season_name,
+    y = min(avg_poss_time - 1), yend = max(avg_poss_time + 1)
+  ),
+  linetype = &quot;dashed&quot;, size = 0.1
+  ) + # Draw dashed lines
+  scale_colour_manual(values = c(barca_team_colour, opp_team_colour, non_event_colour)) +
+  scale_y_continuous(expand = c(0, 0)) +
+  theme(
+    legend.key = element_rect(fill = &quot;white&quot;), # background of legend icon
+    panel.grid.major = element_blank(),
+    panel.grid.major.x = element_line(color = non_event_colour),
+    panel.grid.minor = element_blank(),
+    panel.background = element_blank()
+  ) +
+  labs(
+    title = &quot;Barcelona average time in possession vs opponents, per season&quot;,
+    x = &quot;Season&quot;, y = &quot;Average Time in Possession (seconds)&quot;, color = &quot;&quot;
+  ) +
+  coord_flip()
+plot520_dot_poss_time</code></pre>
+<p><img src="{{< blogdown/postref >}}index_files/figure-html/unnamed-chunk-13-1.png" width="672" /></p>
+<p>There is a noticeable improvement over time in how long Barcelona keep the ball for each possession, growing from about 20 seconds in 2004 to above 25 seconds in 2021. Their La Liga opponents also demonstrate an improvement in how long they keep possession, albeit to a lesser extent. The average duration each time the ball goes out of play, is reasonably steady around the 15 second mark.</p>
+<p>I enjoyed digging around the Barcelona possession data. While I expected Barcelona to be stronger than their opponents when it came to possession, I thought it was quite interesting to see how utterly dominant they actually were during this period. They are a level above everyone else in La Liga when it comes to keeping the ball.</p>

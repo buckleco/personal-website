@@ -1,0 +1,1467 @@
+---
+title: "Create a model to predict wine color from the wine rating description"
+author: "Conor Buckley"
+date: 2022-02-25
+categories: ["R", "Model"]
+tags: ["R", "classification model", "tidytext", "wine", "logistic regression", "LASSO"]
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+
+
+<p>I recently read an interesting <a href="https://juliasilge.com/blog/tidy-text-classification/">blog post</a> by <a href="https://juliasilge.com/about/">Julia Silge</a> about creating a supervised machine learning classification model to distinguish text between two different novels. I thought it would be good exercise to create a similar model using the wine dataset I previously used in other blog posts. Specifically, a model that classifies each wine into either red or white wine, based on the text used to describe the wine by the wine taster.</p>
+<p>Firstly, I load the libraries I need for this post.</p>
+<pre class="r"><code># Load libraries required for this post
+library(tidyverse)
+library(tidytext) # https://www.tidytextmining.com/
+library(rsample) # https://rsample.tidymodels.org/
+library(glmnet) # https://glmnet.stanford.edu/articles/glmnet.html
+library(broom) # https://broom.tidymodels.org/
+library(yardstick) # https://yardstick.tidymodels.org/
+library(scales)
+library(gt)</code></pre>
+<div id="construct-the-dataset" class="section level3">
+<h3>1. Construct the dataset</h3>
+<p>Next, I get the data from the ‘Tidy Tuesday’ Github repo. For more about the Tidy Tuesday project, see <a href="../2022-03-11-tidy-tuesday-project/">this post</a>.</p>
+<pre class="r"><code># Get the base data from the Tidy Tuesday Github repository using readr package
+# 14 variables with 129,971 observations
+wine_ratings &lt;- read_csv(&quot;https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2019/2019-05-28/winemag-data-130k-v2.csv&quot;)</code></pre>
+<p>This dataset contains nearly 130k wines that have been rated by Wine Enthusiast magazine. Each rating comes with a corresponding description of the wine submitted by the taster. These descriptions are short, generally about 3 sentences long. The color of the wine is not included in the dataset. I have to create this variable based on the variety of the wine. This is a pretty blunt way of assessing the color of the wine. Even though I’m sure there are some errors (especially when it comes to Champagne and Sparkling Blends), for the purposes of this post, they do not cause too many problems. Also, they provide some interesting insight when I run the model on the test dataset later on.</p>
+<pre class="r"><code># Filter the data to keep only grapes with more than 1000 reviews
+# Assign a wine color to each of those grapes
+grape_color &lt;- wine_ratings %&gt;%
+  count(variety) %&gt;%
+  arrange(desc(n)) %&gt;%
+  filter(n &gt; 1000) %&gt;%
+  mutate(wine_color = case_when(
+    variety == &quot;Pinot Noir&quot; ~ &quot;Red&quot;,
+    variety == &quot;Chardonnay&quot; ~ &quot;White&quot;,
+    variety == &quot;Cabernet Sauvignon&quot; ~ &quot;Red&quot;,
+    variety == &quot;Red Blend&quot; ~ &quot;Red&quot;,
+    variety == &quot;Bordeaux-style Red Blend&quot; ~ &quot;Red&quot;,
+    variety == &quot;Riesling&quot; ~ &quot;White&quot;,
+    variety == &quot;Sauvignon Blanc&quot; ~ &quot;White&quot;,
+    variety == &quot;Syrah&quot; ~ &quot;Red&quot;,
+    variety == &quot;Merlot&quot; ~ &quot;Red&quot;,
+    variety == &quot;Nebbiolo&quot; ~ &quot;Red&quot;,
+    variety == &quot;Zinfandel&quot; ~ &quot;Red&quot;,
+    variety == &quot;Sangiovese&quot; ~ &quot;Red&quot;,
+    variety == &quot;Malbec&quot; ~ &quot;Red&quot;,
+    variety == &quot;Portuguese Red&quot; ~ &quot;Red&quot;,
+    variety == &quot;White Blend&quot; ~ &quot;White&quot;,
+    variety == &quot;Sparkling Blend&quot; ~ &quot;White&quot;,
+    variety == &quot;Tempranillo&quot; ~ &quot;Red&quot;,
+    variety == &quot;Rhône-style Red Blend&quot; ~ &quot;Red&quot;,
+    variety == &quot;Pinot Gris&quot; ~ &quot;White&quot;,
+    variety == &quot;Champagne Blend&quot; ~ &quot;White&quot;,
+    variety == &quot;Cabernet Franc&quot; ~ &quot;Red&quot;,
+    variety == &quot;Grüner Veltliner&quot; ~ &quot;White&quot;,
+    variety == &quot;Portuguese White&quot; ~ &quot;White&quot;,
+    variety == &quot;Bordeaux-style White Blend&quot; ~ &quot;White&quot;,
+    variety == &quot;Pinot Grigio&quot; ~ &quot;White&quot;,
+    variety == &quot;Gamay&quot; ~ &quot;Red&quot;,
+    variety == &quot;Gewürztraminer&quot; ~ &quot;White&quot;
+  )) %&gt;%
+  remove_missing() # remove rows with NAs (1 row - Rose)</code></pre>
+<p>Next, I join this wine color variable to the original dataset, keeping only the variables I need. This leaves me with the wine color, the taster’s description of the wine and a corresponding ID variable, as a base dataset with about 100k rows to use for the model. Addtionally, I create a second version of this dataset that also includes the variety of the wine. This is not used in the construction of the model, but it is useful later on when I examine the incorrectly classified wines.</p>
+<pre class="r"><code># Create the base data set for the model by joining the wine color to the dataset
+# Add an ID column and remove all other colunms except description and wine_color
+# This results in 99,758 rows; desc_ID, description &amp; wine_color
+base_model_data &lt;- wine_ratings %&gt;%
+  inner_join(grape_color) %&gt;%
+  select(description, wine_color) %&gt;%
+  rowid_to_column(&quot;desc_ID&quot;) # could also use &#39;mutate(desc_ID = row_number())&#39;
+
+# Create a version of the base data set for the model that contains the variety
+base_model_data_variety &lt;- wine_ratings %&gt;%
+  inner_join(grape_color) %&gt;%
+  select(description, wine_color, variety) %&gt;%
+  rowid_to_column(&quot;desc_ID&quot;) # could also use &#39;mutate(desc_ID = row_number())&#39;</code></pre>
+<p>The next step is to unnest the words in the description into individual rows. I do this using functions from the tidytext package. This structure is referred to as a tidy text format, that is, a table with one token (word in this case) per row. Having the text data in this format makes it easy to use with packages in the tidyverse.</p>
+<pre class="r"><code># Using tidytext unnest the words in the description into individual rows
+# Only keep the rows with words that occur more than 100 times
+tidy_wine_color &lt;- base_model_data %&gt;%
+  unnest_tokens(word, description) %&gt;%
+  anti_join(get_stopwords()) %&gt;% # remove stop words
+  group_by(word) %&gt;%
+  filter(n() &gt; 100) %&gt;% # keep words that appear more than 100 times
+  ungroup()
+
+# Create a bar plot of the top 20 words associated with each wine color
+tidy_wine_color %&gt;%
+  count(wine_color, word, sort = TRUE) %&gt;%
+  group_by(wine_color) %&gt;%
+  top_n(20) %&gt;%
+  ungroup() %&gt;%
+  ggplot(aes(reorder_within(word, n, wine_color), n,
+    fill = wine_color
+  )) +
+  geom_col(alpha = 0.7, show.legend = FALSE) +
+  scale_x_reordered() +
+  scale_y_continuous(expand = c(0, 0), labels = comma) +
+  scale_fill_manual(values = c(&quot;#722F37&quot;, &quot;#e6e4b5&quot;)) +
+  facet_wrap(~wine_color, scales = &quot;free&quot;) +
+  coord_flip() +
+  labs(
+    x = NULL, y = &quot;Word count&quot;,
+    title = &quot;Most frequent words for red/white grapes after removing stop words&quot;,
+  ) +
+  theme(
+    panel.background = element_blank(),
+    plot.title = element_text(color = &quot;black&quot;, hjust = 0, size = 14),
+    panel.grid.major.x = element_line(color = &quot;grey90&quot;),
+    panel.grid.minor.x = element_line(color = &quot;grey80&quot;),
+    panel.grid.major.y = element_blank(),
+    panel.grid.minor.y = element_blank(),
+    strip.background = element_rect(fill = &quot;white&quot;), # title area of sub charts
+    strip.text = element_text(size = 12)
+  )</code></pre>
+<p><img src="{{< blogdown/postref >}}index_files/figure-html/unnamed-chunk-5-1.png" width="672" /></p>
+<p>Another common piece of exploritory data analysis when working with text data is to calculate the tf-idf statistic. The term frequency (tf) part is simply the count of a given word divided by the total number of words in the dataset. The inverse document frequency (idf) is a weight that the term frequency is multiplied by. The idf weight is smaller for commonly used words and larger for words that are not used very much. The tf-idf statistic attempts to measure how important a given word is to a dataset.</p>
+<pre class="r"><code># Create a plot using tf_idf instead of word count
+# Get the total number of red and white wines in the dataset
+total_words &lt;- tidy_wine_color %&gt;%
+  count(wine_color, word, sort = TRUE) %&gt;%
+  group_by(wine_color) %&gt;%
+  summarize(total = sum(n))
+
+# Create a new dataset by combining the main data with the totals for red and white
+tidy_wine_color_idf &lt;- tidy_wine_color %&gt;%
+  count(wine_color, word, sort = TRUE) %&gt;%
+  left_join(total_words)
+
+# If all tdf_idfs are zero that means that every word appears in descriptions of both
+# red and white wines
+# Create a bar plot of the top 10 words associated with each color wine using tf_idf
+tidy_wine_color_idf %&gt;%
+  bind_tf_idf(word, wine_color, n) %&gt;%
+  select(-total) %&gt;%
+  arrange(desc(tf_idf)) %&gt;%
+  group_by(wine_color) %&gt;%
+  top_n(10) %&gt;%
+  ungroup() %&gt;%
+  ggplot(aes(reorder_within(word, tf_idf, wine_color), tf_idf,
+    fill = wine_color
+  )) +
+  geom_col(alpha = 0.8, show.legend = FALSE) +
+  scale_x_reordered() +
+  coord_flip() +
+  facet_wrap(~wine_color, scales = &quot;free&quot;) +
+  scale_y_continuous(expand = c(0, 0), labels = number_format(accuracy = 0.0001)) +
+  scale_fill_manual(values = c(&quot;#722F37&quot;, &quot;#e6e4b5&quot;)) +
+  labs(
+    x = NULL, y = &quot;tf_idf&quot;,
+    title = &quot;Most important words to red/white grapes after removing stop words&quot;
+  ) +
+  theme(
+    panel.background = element_blank(),
+    plot.title = element_text(color = &quot;black&quot;, hjust = 0, size = 14),
+    panel.grid.major.x = element_line(color = &quot;grey90&quot;),
+    panel.grid.minor.x = element_line(color = &quot;grey80&quot;),
+    panel.grid.major.y = element_blank(),
+    panel.grid.minor.y = element_blank(),
+    strip.background = element_rect(fill = &quot;white&quot;), # title area of sub charts
+    strip.text = element_text(size = 12)
+  )</code></pre>
+<p><img src="{{< blogdown/postref >}}index_files/figure-html/unnamed-chunk-6-1.png" width="672" /></p>
+</div>
+<div id="build-the-model" class="section level3">
+<h3>2. Build the model</h3>
+<p>Firstly, I need to split the data into training and test sets. I do this using the rsample package on the ‘base_model_data’ that I created earlier.</p>
+<pre class="r"><code># Split the data into the training and test datasets (at the description level)
+# Set a seed to ensure the data is identically split each run
+set.seed(1916)
+bm_data_split &lt;- base_model_data %&gt;%
+  select(desc_ID) %&gt;%
+  initial_split()
+
+# Break it into the training and test sets
+train_data &lt;- training(bm_data_split)
+test_data &lt;- testing(bm_data_split)</code></pre>
+<p>Now, I create a sparse matrix from the training data in order to use it with the model. A sparse matrix contains mostly elements that are zero, corresponding to few pairwise interactions.</p>
+<pre class="r"><code># Transform the training data to a sparse matrix to use for the machine learning algorithm
+sparse_words &lt;- tidy_wine_color %&gt;%
+  count(desc_ID, word) %&gt;%
+  inner_join(train_data) %&gt;%
+  cast_sparse(desc_ID, word, n)</code></pre>
+<p>This results in a high dimensional training dataset with 74,818 observations (wine descriptions) and 2,391 features (unique individual words) with the intersection of these being a count of the number of times the given word appears in the given wine description. In most cases this intersection is blank, hence the sparse matrix.</p>
+<p>The last step before creating the model is to use row names from the sparse matrix training data with the ‘base_model_data’ to create a tibble containing the 74,818 wine description IDs and the corresponding wine color.</p>
+<pre class="r"><code># Build a tibble with a response variable
+# That is, the wine_color that is associated with each desc_ID
+word_rownames &lt;- as.integer(rownames(sparse_words))
+
+bm_data_joined &lt;- tibble(desc_ID = word_rownames) %&gt;%
+  left_join(base_model_data %&gt;%
+    select(desc_ID, wine_color))</code></pre>
+<p>For the model, I fit a logistic regression model with LASSO regularization using the glmnet package.</p>
+<p>Logistic regression models class probabilities. Any input to the model yields a number lying between 0 and 1, representing the probability of class membership, in this case the two classes are red wine and white wine.</p>
+<p>In LASSO (Least Absolute Shrinkage and Selection Operator) regression, the effect of the penalty term is to set the the coefficients that contribute most to the error, to zero. This means that LASSO regression works like a feature selector that picks out the most important coefficients, i.e. those that are most predictive (and have the lowest p-values). It helps to reduce overfitting.</p>
+<p>Lambda is a free parameter, which is usually selected in such a way that the resulting model minimises the out of sample error. The function cv.glmnet automatically performs a grid search to find the optimal value of lambda. This is the value of lambda that gives the simplest model, but also lies within one standard error of the optimal value of lambda.</p>
+<p>I would recommend this <a href="https://eight2late.wordpress.com/2017/07/11/a-gentle-introduction-to-logistic-regression-and-lasso-regularisation-using-r/">tutorial</a> as a useful introduction to logistic regression using LASSO.</p>
+<pre class="r"><code># Train the classification model
+is_red &lt;- bm_data_joined$wine_color == &quot;Red&quot;
+model &lt;- cv.glmnet(sparse_words, is_red,
+  family = &quot;binomial&quot;,
+  parallel = FALSE, keep = TRUE
+)
+
+# Default cross-validation curve plot from glmnet&#39;s output
+plot(model)</code></pre>
+<p><img src="{{< blogdown/postref >}}index_files/figure-html/unnamed-chunk-10-1.png" width="672" /></p>
+<p>The plot shows that the log of the optimal value of lambda (i.e. the one that minimises the binomial deviance) is approximately -8.</p>
+<pre class="r"><code># Default fit plot from glmnet&#39;s output
+plot(model$glmnet.fit)</code></pre>
+<p><img src="{{< blogdown/postref >}}index_files/figure-html/unnamed-chunk-11-1.png" width="672" /></p>
+<p>This is a coefficient profile plot of the coefficient paths for the fitted “glmnet” model. The smaller the L1 norm the more regularization is occuring. As the L1 norm increases, more variables enter the model, as their co-efficients take on non-zero values. The objective of regularisation is to balance accuracy and simplicity.</p>
+</div>
+<div id="examine-and-evaluate-the-model" class="section level3">
+<h3>3. Examine and evaluate the model</h3>
+<p>Using the broom package to examine the coefficients of the model, for the largest value of lambda within one standard error of the minimum, we can see which coefficients are the largest in each direction.</p>
+<pre class="r"><code># Get the coefficients of the model, for the largest value of lambda
+# with error within 1 standard error of the minimum
+coefs &lt;- model$glmnet.fit %&gt;%
+  tidy() %&gt;% # from the broom package; converts model output to tidy tibble
+  filter(lambda == model$lambda.1se)
+
+coefs %&gt;%
+  group_by(estimate &gt; 0) %&gt;%
+  top_n(10, abs(estimate)) %&gt;%
+  ungroup() %&gt;%
+  ggplot(aes(estimate, fct_reorder(term, estimate), fill = estimate &gt; 0)) +
+  geom_col(alpha = 0.7, show.legend = FALSE) +
+  scale_fill_manual(values = c(&quot;#e6e4b5&quot;, &quot;#722F37&quot;)) +
+  labs(
+    y = NULL,
+    title = &quot;Coefficients that increase/decrease probability the most&quot;,
+    subtitle = &quot;A wine description mentioning &#39;lychee&#39; is unlikely to be a red wine&quot;
+  ) +
+  theme(
+    panel.background = element_blank(),
+    panel.grid.major.x = element_line(color = &quot;grey90&quot;),
+    panel.grid.minor.x = element_line(color = &quot;grey80&quot;),
+    panel.grid.major.y = element_line(color = &quot;grey90&quot;),
+    panel.grid.minor.y = element_blank()
+  )</code></pre>
+<p><img src="{{< blogdown/postref >}}index_files/figure-html/unnamed-chunk-12-1.png" width="672" /></p>
+<p>Looking at the plot above, the coefficients seem to make a lot of sense. Words like blackberry, plummy, black and cherry all strongly increase the probability of the wine being red. While coefficients like lychee, yellow, cava and chardonnay all decrease the probability of the wine being red.</p>
+<p>Next thing is to evaluate the model using test data. I create a tibble that tells us for each wine description in the test set, the probability that it is describing a red wine.</p>
+<pre class="r"><code># Extract the intercept
+intercept &lt;- coefs %&gt;%
+  filter(term == &quot;(Intercept)&quot;) %&gt;%
+  pull(estimate)
+
+# Create a tibble that tells us, for each desc_ID in the test set,
+# the probability of it being a red wine
+classifications &lt;- tidy_wine_color %&gt;%
+  inner_join(test_data) %&gt;%
+  inner_join(coefs, by = c(&quot;word&quot; = &quot;term&quot;)) %&gt;%
+  group_by(desc_ID) %&gt;%
+  summarize(score = sum(estimate)) %&gt;%
+  mutate(probability = plogis(intercept + score))</code></pre>
+<p>Next, using the classifications tibble I just created, in conjunction with the yardstick package, I can calculate some model performance metrics. Starting with the receiver operating characteristic (ROC) curve. The ROC curve is created by plotting the true positive rate against the false positive rate at various threshold settings. It illustrates the diagnostic ability of our model on the test data.</p>
+<pre class="r"><code># Use the yardstick package to calculate some model performance metrics
+comment_classes &lt;- classifications %&gt;%
+  left_join(base_model_data_variety %&gt;%
+    select(wine_color, desc_ID, variety), by = &quot;desc_ID&quot;) %&gt;%
+  mutate(wine_color = as.factor(wine_color))
+
+# Plot the ROC curve
+comment_classes %&gt;%
+  roc_curve(wine_color, probability) %&gt;%
+  ggplot(aes(x = 1 - specificity, y = sensitivity)) +
+  geom_line(color = &quot;navy blue&quot;, size = 1.25) +
+  geom_abline(lty = 2, alpha = 0.5, color = &quot;gray75&quot;, size = 1) +
+  labs(
+    title = &quot;ROC curve for text classification using regularized regression&quot;,
+    subtitle = &quot;Predicting whether a wine review description refers to a red wine or not&quot;
+  ) +
+  theme(
+    panel.background = element_blank(),
+    panel.grid.major.x = element_line(color = &quot;grey90&quot;),
+    panel.grid.minor.x = element_blank(),
+    panel.grid.major.y = element_line(color = &quot;grey90&quot;),
+    panel.grid.minor.y = element_blank()
+  )</code></pre>
+<p><img src="{{< blogdown/postref >}}index_files/figure-html/unnamed-chunk-14-1.png" width="672" /></p>
+<p>The x-axis (1-specificity) contains the false positive rate (false positive/(false positive + true negative)). The y-axis (sensitivity) contains the false negative rate (false negative/(true positive + false negative)). These points are then plotted for every possible threshold cut-off. A perfect model that predicts with 100% accuracy would have an ROC curve that passes through the upper left corner (100% specificity and 100% sensitivity). The dashed grey line represents the ‘line of no-discrimination’, which is where a model performance equivalent to random guessing would appear. Therefore, the plot above looks good, following the classic hockey stick shape.</p>
+<p>Next obtain the area under the ROC curve (AUC) on the test data.</p>
+<pre class="r"><code># Get the AUC on the test data
+comment_classes %&gt;%
+  roc_auc(wine_color, probability)</code></pre>
+<pre><code>## # A tibble: 1 x 3
+##   .metric .estimator .estimate
+##   &lt;chr&gt;   &lt;chr&gt;          &lt;dbl&gt;
+## 1 roc_auc binary         0.997</code></pre>
+<p>An AUC of 99.7% is a very good number. It corresponds to the probability that the model, when given one randomly selected positive instance and one randomly selected negative instance, will be able to tell which one is which.</p>
+<p>It is also easy to create the confustion matrix. I use a probability of 0.5 as the cutoff. A confusion matrix is a table that helps the user to assess the performance of a classification algorithm.</p>
+<pre class="r"><code># Create a confusion matrix
+# I convert it to a tidy tibble, so I can extract the values
+# I put them into a data frame to create a gt table
+cm &lt;- comment_classes %&gt;%
+  mutate(
+    prediction = case_when(
+      probability &gt; 0.5 ~ &quot;Red&quot;,
+      TRUE ~ &quot;White&quot;
+    ),
+    prediction = as.factor(prediction)
+  ) %&gt;%
+  conf_mat(wine_color, prediction) %&gt;%
+  tidy()
+
+# Convert the output of the Confusion Matrix to a data frame
+cm_df &lt;- data.frame(
+  True_Red = c(cm$value[1], cm$value[2]),
+  True_White = c(cm$value[3], cm$value[4]),
+  row.names = c(&quot;Pred_Red&quot;, &quot;Pred_White&quot;)
+)
+
+# Create the table using the gt package
+cm_df %&gt;%
+  gt(rownames_to_stub = TRUE) %&gt;%
+  data_color(columns = True_Red, colors = c(&quot;grey90&quot;, &quot;#722F37&quot;)) %&gt;%
+  data_color(columns = True_White, colors = c(&quot;grey90&quot;, &quot;#e6e4b5&quot;)) %&gt;%
+  fmt_number(
+    columns = c(True_Red, True_White),
+    sep_mark = &quot;,&quot;,
+    decimals = 0
+  ) %&gt;%
+  tab_style(
+    style = cell_text(weight = &quot;bold&quot;),
+    locations = cells_column_labels()
+  ) %&gt;%
+  tab_style(
+    style = cell_text(weight = &quot;bold&quot;),
+    locations = cells_stub()
+  ) %&gt;%
+  tab_options(table.align = &quot;left&quot;)</code></pre>
+<div id="wndogsgytx" style="overflow-x:auto;overflow-y:auto;width:auto;height:auto;">
+<style>html {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Helvetica Neue', 'Fira Sans', 'Droid Sans', Arial, sans-serif;
+}
+
+#wndogsgytx .gt_table {
+  display: table;
+  border-collapse: collapse;
+  margin-left: 0;
+  margin-right: auto;
+  color: #333333;
+  font-size: 16px;
+  font-weight: normal;
+  font-style: normal;
+  background-color: #FFFFFF;
+  width: auto;
+  border-top-style: solid;
+  border-top-width: 2px;
+  border-top-color: #A8A8A8;
+  border-right-style: none;
+  border-right-width: 2px;
+  border-right-color: #D3D3D3;
+  border-bottom-style: solid;
+  border-bottom-width: 2px;
+  border-bottom-color: #A8A8A8;
+  border-left-style: none;
+  border-left-width: 2px;
+  border-left-color: #D3D3D3;
+}
+
+#wndogsgytx .gt_heading {
+  background-color: #FFFFFF;
+  text-align: center;
+  border-bottom-color: #FFFFFF;
+  border-left-style: none;
+  border-left-width: 1px;
+  border-left-color: #D3D3D3;
+  border-right-style: none;
+  border-right-width: 1px;
+  border-right-color: #D3D3D3;
+}
+
+#wndogsgytx .gt_title {
+  color: #333333;
+  font-size: 125%;
+  font-weight: initial;
+  padding-top: 4px;
+  padding-bottom: 4px;
+  border-bottom-color: #FFFFFF;
+  border-bottom-width: 0;
+}
+
+#wndogsgytx .gt_subtitle {
+  color: #333333;
+  font-size: 85%;
+  font-weight: initial;
+  padding-top: 0;
+  padding-bottom: 6px;
+  border-top-color: #FFFFFF;
+  border-top-width: 0;
+}
+
+#wndogsgytx .gt_bottom_border {
+  border-bottom-style: solid;
+  border-bottom-width: 2px;
+  border-bottom-color: #D3D3D3;
+}
+
+#wndogsgytx .gt_col_headings {
+  border-top-style: solid;
+  border-top-width: 2px;
+  border-top-color: #D3D3D3;
+  border-bottom-style: solid;
+  border-bottom-width: 2px;
+  border-bottom-color: #D3D3D3;
+  border-left-style: none;
+  border-left-width: 1px;
+  border-left-color: #D3D3D3;
+  border-right-style: none;
+  border-right-width: 1px;
+  border-right-color: #D3D3D3;
+}
+
+#wndogsgytx .gt_col_heading {
+  color: #333333;
+  background-color: #FFFFFF;
+  font-size: 100%;
+  font-weight: normal;
+  text-transform: inherit;
+  border-left-style: none;
+  border-left-width: 1px;
+  border-left-color: #D3D3D3;
+  border-right-style: none;
+  border-right-width: 1px;
+  border-right-color: #D3D3D3;
+  vertical-align: bottom;
+  padding-top: 5px;
+  padding-bottom: 6px;
+  padding-left: 5px;
+  padding-right: 5px;
+  overflow-x: hidden;
+}
+
+#wndogsgytx .gt_column_spanner_outer {
+  color: #333333;
+  background-color: #FFFFFF;
+  font-size: 100%;
+  font-weight: normal;
+  text-transform: inherit;
+  padding-top: 0;
+  padding-bottom: 0;
+  padding-left: 4px;
+  padding-right: 4px;
+}
+
+#wndogsgytx .gt_column_spanner_outer:first-child {
+  padding-left: 0;
+}
+
+#wndogsgytx .gt_column_spanner_outer:last-child {
+  padding-right: 0;
+}
+
+#wndogsgytx .gt_column_spanner {
+  border-bottom-style: solid;
+  border-bottom-width: 2px;
+  border-bottom-color: #D3D3D3;
+  vertical-align: bottom;
+  padding-top: 5px;
+  padding-bottom: 5px;
+  overflow-x: hidden;
+  display: inline-block;
+  width: 100%;
+}
+
+#wndogsgytx .gt_group_heading {
+  padding: 8px;
+  color: #333333;
+  background-color: #FFFFFF;
+  font-size: 100%;
+  font-weight: initial;
+  text-transform: inherit;
+  border-top-style: solid;
+  border-top-width: 2px;
+  border-top-color: #D3D3D3;
+  border-bottom-style: solid;
+  border-bottom-width: 2px;
+  border-bottom-color: #D3D3D3;
+  border-left-style: none;
+  border-left-width: 1px;
+  border-left-color: #D3D3D3;
+  border-right-style: none;
+  border-right-width: 1px;
+  border-right-color: #D3D3D3;
+  vertical-align: middle;
+}
+
+#wndogsgytx .gt_empty_group_heading {
+  padding: 0.5px;
+  color: #333333;
+  background-color: #FFFFFF;
+  font-size: 100%;
+  font-weight: initial;
+  border-top-style: solid;
+  border-top-width: 2px;
+  border-top-color: #D3D3D3;
+  border-bottom-style: solid;
+  border-bottom-width: 2px;
+  border-bottom-color: #D3D3D3;
+  vertical-align: middle;
+}
+
+#wndogsgytx .gt_from_md > :first-child {
+  margin-top: 0;
+}
+
+#wndogsgytx .gt_from_md > :last-child {
+  margin-bottom: 0;
+}
+
+#wndogsgytx .gt_row {
+  padding-top: 8px;
+  padding-bottom: 8px;
+  padding-left: 5px;
+  padding-right: 5px;
+  margin: 10px;
+  border-top-style: solid;
+  border-top-width: 1px;
+  border-top-color: #D3D3D3;
+  border-left-style: none;
+  border-left-width: 1px;
+  border-left-color: #D3D3D3;
+  border-right-style: none;
+  border-right-width: 1px;
+  border-right-color: #D3D3D3;
+  vertical-align: middle;
+  overflow-x: hidden;
+}
+
+#wndogsgytx .gt_stub {
+  color: #333333;
+  background-color: #FFFFFF;
+  font-size: 100%;
+  font-weight: initial;
+  text-transform: inherit;
+  border-right-style: solid;
+  border-right-width: 2px;
+  border-right-color: #D3D3D3;
+  padding-left: 12px;
+}
+
+#wndogsgytx .gt_summary_row {
+  color: #333333;
+  background-color: #FFFFFF;
+  text-transform: inherit;
+  padding-top: 8px;
+  padding-bottom: 8px;
+  padding-left: 5px;
+  padding-right: 5px;
+}
+
+#wndogsgytx .gt_first_summary_row {
+  padding-top: 8px;
+  padding-bottom: 8px;
+  padding-left: 5px;
+  padding-right: 5px;
+  border-top-style: solid;
+  border-top-width: 2px;
+  border-top-color: #D3D3D3;
+}
+
+#wndogsgytx .gt_grand_summary_row {
+  color: #333333;
+  background-color: #FFFFFF;
+  text-transform: inherit;
+  padding-top: 8px;
+  padding-bottom: 8px;
+  padding-left: 5px;
+  padding-right: 5px;
+}
+
+#wndogsgytx .gt_first_grand_summary_row {
+  padding-top: 8px;
+  padding-bottom: 8px;
+  padding-left: 5px;
+  padding-right: 5px;
+  border-top-style: double;
+  border-top-width: 6px;
+  border-top-color: #D3D3D3;
+}
+
+#wndogsgytx .gt_striped {
+  background-color: rgba(128, 128, 128, 0.05);
+}
+
+#wndogsgytx .gt_table_body {
+  border-top-style: solid;
+  border-top-width: 2px;
+  border-top-color: #D3D3D3;
+  border-bottom-style: solid;
+  border-bottom-width: 2px;
+  border-bottom-color: #D3D3D3;
+}
+
+#wndogsgytx .gt_footnotes {
+  color: #333333;
+  background-color: #FFFFFF;
+  border-bottom-style: none;
+  border-bottom-width: 2px;
+  border-bottom-color: #D3D3D3;
+  border-left-style: none;
+  border-left-width: 2px;
+  border-left-color: #D3D3D3;
+  border-right-style: none;
+  border-right-width: 2px;
+  border-right-color: #D3D3D3;
+}
+
+#wndogsgytx .gt_footnote {
+  margin: 0px;
+  font-size: 90%;
+  padding: 4px;
+}
+
+#wndogsgytx .gt_sourcenotes {
+  color: #333333;
+  background-color: #FFFFFF;
+  border-bottom-style: none;
+  border-bottom-width: 2px;
+  border-bottom-color: #D3D3D3;
+  border-left-style: none;
+  border-left-width: 2px;
+  border-left-color: #D3D3D3;
+  border-right-style: none;
+  border-right-width: 2px;
+  border-right-color: #D3D3D3;
+}
+
+#wndogsgytx .gt_sourcenote {
+  font-size: 90%;
+  padding: 4px;
+}
+
+#wndogsgytx .gt_left {
+  text-align: left;
+}
+
+#wndogsgytx .gt_center {
+  text-align: center;
+}
+
+#wndogsgytx .gt_right {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+#wndogsgytx .gt_font_normal {
+  font-weight: normal;
+}
+
+#wndogsgytx .gt_font_bold {
+  font-weight: bold;
+}
+
+#wndogsgytx .gt_font_italic {
+  font-style: italic;
+}
+
+#wndogsgytx .gt_super {
+  font-size: 65%;
+}
+
+#wndogsgytx .gt_footnote_marks {
+  font-style: italic;
+  font-weight: normal;
+  font-size: 65%;
+}
+</style>
+<table class="gt_table">
+  
+  <thead class="gt_col_headings">
+    <tr>
+      <th class="gt_col_heading gt_columns_bottom_border gt_left" rowspan="1" colspan="1"></th>
+      <th class="gt_col_heading gt_columns_bottom_border gt_right" rowspan="1" colspan="1" style="font-weight: bold;">True_Red</th>
+      <th class="gt_col_heading gt_columns_bottom_border gt_right" rowspan="1" colspan="1" style="font-weight: bold;">True_White</th>
+    </tr>
+  </thead>
+  <tbody class="gt_table_body">
+    <tr><td class="gt_row gt_left gt_stub" style="font-weight: bold;">Pred_Red</td>
+<td class="gt_row gt_right" style="background-color: #722F37; color: #FFFFFF;">15,989</td>
+<td class="gt_row gt_right" style="background-color: #E5E5E5; color: #000000;">203</td></tr>
+    <tr><td class="gt_row gt_left gt_stub" style="font-weight: bold;">Pred_White</td>
+<td class="gt_row gt_right" style="background-color: #E5E5E5; color: #000000;">201</td>
+<td class="gt_row gt_right" style="background-color: #E6E4B5; color: #000000;">8,547</td></tr>
+  </tbody>
+  
+  
+</table>
+</div>
+<p>The confusion matrix shows that the vast majority of predictions match the true wine color (i.e. true positives and true negatives). The are 203 false positives and 201 false negatives.</p>
+<p>It is worth examining the descriptions of the wines that had a high probability of being red wines, but were actually white wines. These correspond to the 203 false positives from the confusion matrix.</p>
+<pre class="r"><code># Examine the descriptions for wines with a high probability of being red grapes,
+# but are actually white grapes
+gt(comment_classes %&gt;%
+  filter(probability &gt; .8, wine_color == &quot;White&quot;) %&gt;%
+  slice(c(1, 5, 10, 15, 20)) %&gt;%
+  inner_join(base_model_data_variety %&gt;%
+    select(desc_ID, description, variety)) %&gt;%
+  select(probability, description, variety)) %&gt;%
+  tab_style(
+    style = cell_text(weight = &quot;bold&quot;),
+    locations = cells_column_labels()
+  )</code></pre>
+<div id="yzqfmavwzi" style="overflow-x:auto;overflow-y:auto;width:auto;height:auto;">
+<style>html {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Helvetica Neue', 'Fira Sans', 'Droid Sans', Arial, sans-serif;
+}
+
+#yzqfmavwzi .gt_table {
+  display: table;
+  border-collapse: collapse;
+  margin-left: auto;
+  margin-right: auto;
+  color: #333333;
+  font-size: 16px;
+  font-weight: normal;
+  font-style: normal;
+  background-color: #FFFFFF;
+  width: auto;
+  border-top-style: solid;
+  border-top-width: 2px;
+  border-top-color: #A8A8A8;
+  border-right-style: none;
+  border-right-width: 2px;
+  border-right-color: #D3D3D3;
+  border-bottom-style: solid;
+  border-bottom-width: 2px;
+  border-bottom-color: #A8A8A8;
+  border-left-style: none;
+  border-left-width: 2px;
+  border-left-color: #D3D3D3;
+}
+
+#yzqfmavwzi .gt_heading {
+  background-color: #FFFFFF;
+  text-align: center;
+  border-bottom-color: #FFFFFF;
+  border-left-style: none;
+  border-left-width: 1px;
+  border-left-color: #D3D3D3;
+  border-right-style: none;
+  border-right-width: 1px;
+  border-right-color: #D3D3D3;
+}
+
+#yzqfmavwzi .gt_title {
+  color: #333333;
+  font-size: 125%;
+  font-weight: initial;
+  padding-top: 4px;
+  padding-bottom: 4px;
+  border-bottom-color: #FFFFFF;
+  border-bottom-width: 0;
+}
+
+#yzqfmavwzi .gt_subtitle {
+  color: #333333;
+  font-size: 85%;
+  font-weight: initial;
+  padding-top: 0;
+  padding-bottom: 6px;
+  border-top-color: #FFFFFF;
+  border-top-width: 0;
+}
+
+#yzqfmavwzi .gt_bottom_border {
+  border-bottom-style: solid;
+  border-bottom-width: 2px;
+  border-bottom-color: #D3D3D3;
+}
+
+#yzqfmavwzi .gt_col_headings {
+  border-top-style: solid;
+  border-top-width: 2px;
+  border-top-color: #D3D3D3;
+  border-bottom-style: solid;
+  border-bottom-width: 2px;
+  border-bottom-color: #D3D3D3;
+  border-left-style: none;
+  border-left-width: 1px;
+  border-left-color: #D3D3D3;
+  border-right-style: none;
+  border-right-width: 1px;
+  border-right-color: #D3D3D3;
+}
+
+#yzqfmavwzi .gt_col_heading {
+  color: #333333;
+  background-color: #FFFFFF;
+  font-size: 100%;
+  font-weight: normal;
+  text-transform: inherit;
+  border-left-style: none;
+  border-left-width: 1px;
+  border-left-color: #D3D3D3;
+  border-right-style: none;
+  border-right-width: 1px;
+  border-right-color: #D3D3D3;
+  vertical-align: bottom;
+  padding-top: 5px;
+  padding-bottom: 6px;
+  padding-left: 5px;
+  padding-right: 5px;
+  overflow-x: hidden;
+}
+
+#yzqfmavwzi .gt_column_spanner_outer {
+  color: #333333;
+  background-color: #FFFFFF;
+  font-size: 100%;
+  font-weight: normal;
+  text-transform: inherit;
+  padding-top: 0;
+  padding-bottom: 0;
+  padding-left: 4px;
+  padding-right: 4px;
+}
+
+#yzqfmavwzi .gt_column_spanner_outer:first-child {
+  padding-left: 0;
+}
+
+#yzqfmavwzi .gt_column_spanner_outer:last-child {
+  padding-right: 0;
+}
+
+#yzqfmavwzi .gt_column_spanner {
+  border-bottom-style: solid;
+  border-bottom-width: 2px;
+  border-bottom-color: #D3D3D3;
+  vertical-align: bottom;
+  padding-top: 5px;
+  padding-bottom: 5px;
+  overflow-x: hidden;
+  display: inline-block;
+  width: 100%;
+}
+
+#yzqfmavwzi .gt_group_heading {
+  padding: 8px;
+  color: #333333;
+  background-color: #FFFFFF;
+  font-size: 100%;
+  font-weight: initial;
+  text-transform: inherit;
+  border-top-style: solid;
+  border-top-width: 2px;
+  border-top-color: #D3D3D3;
+  border-bottom-style: solid;
+  border-bottom-width: 2px;
+  border-bottom-color: #D3D3D3;
+  border-left-style: none;
+  border-left-width: 1px;
+  border-left-color: #D3D3D3;
+  border-right-style: none;
+  border-right-width: 1px;
+  border-right-color: #D3D3D3;
+  vertical-align: middle;
+}
+
+#yzqfmavwzi .gt_empty_group_heading {
+  padding: 0.5px;
+  color: #333333;
+  background-color: #FFFFFF;
+  font-size: 100%;
+  font-weight: initial;
+  border-top-style: solid;
+  border-top-width: 2px;
+  border-top-color: #D3D3D3;
+  border-bottom-style: solid;
+  border-bottom-width: 2px;
+  border-bottom-color: #D3D3D3;
+  vertical-align: middle;
+}
+
+#yzqfmavwzi .gt_from_md > :first-child {
+  margin-top: 0;
+}
+
+#yzqfmavwzi .gt_from_md > :last-child {
+  margin-bottom: 0;
+}
+
+#yzqfmavwzi .gt_row {
+  padding-top: 8px;
+  padding-bottom: 8px;
+  padding-left: 5px;
+  padding-right: 5px;
+  margin: 10px;
+  border-top-style: solid;
+  border-top-width: 1px;
+  border-top-color: #D3D3D3;
+  border-left-style: none;
+  border-left-width: 1px;
+  border-left-color: #D3D3D3;
+  border-right-style: none;
+  border-right-width: 1px;
+  border-right-color: #D3D3D3;
+  vertical-align: middle;
+  overflow-x: hidden;
+}
+
+#yzqfmavwzi .gt_stub {
+  color: #333333;
+  background-color: #FFFFFF;
+  font-size: 100%;
+  font-weight: initial;
+  text-transform: inherit;
+  border-right-style: solid;
+  border-right-width: 2px;
+  border-right-color: #D3D3D3;
+  padding-left: 12px;
+}
+
+#yzqfmavwzi .gt_summary_row {
+  color: #333333;
+  background-color: #FFFFFF;
+  text-transform: inherit;
+  padding-top: 8px;
+  padding-bottom: 8px;
+  padding-left: 5px;
+  padding-right: 5px;
+}
+
+#yzqfmavwzi .gt_first_summary_row {
+  padding-top: 8px;
+  padding-bottom: 8px;
+  padding-left: 5px;
+  padding-right: 5px;
+  border-top-style: solid;
+  border-top-width: 2px;
+  border-top-color: #D3D3D3;
+}
+
+#yzqfmavwzi .gt_grand_summary_row {
+  color: #333333;
+  background-color: #FFFFFF;
+  text-transform: inherit;
+  padding-top: 8px;
+  padding-bottom: 8px;
+  padding-left: 5px;
+  padding-right: 5px;
+}
+
+#yzqfmavwzi .gt_first_grand_summary_row {
+  padding-top: 8px;
+  padding-bottom: 8px;
+  padding-left: 5px;
+  padding-right: 5px;
+  border-top-style: double;
+  border-top-width: 6px;
+  border-top-color: #D3D3D3;
+}
+
+#yzqfmavwzi .gt_striped {
+  background-color: rgba(128, 128, 128, 0.05);
+}
+
+#yzqfmavwzi .gt_table_body {
+  border-top-style: solid;
+  border-top-width: 2px;
+  border-top-color: #D3D3D3;
+  border-bottom-style: solid;
+  border-bottom-width: 2px;
+  border-bottom-color: #D3D3D3;
+}
+
+#yzqfmavwzi .gt_footnotes {
+  color: #333333;
+  background-color: #FFFFFF;
+  border-bottom-style: none;
+  border-bottom-width: 2px;
+  border-bottom-color: #D3D3D3;
+  border-left-style: none;
+  border-left-width: 2px;
+  border-left-color: #D3D3D3;
+  border-right-style: none;
+  border-right-width: 2px;
+  border-right-color: #D3D3D3;
+}
+
+#yzqfmavwzi .gt_footnote {
+  margin: 0px;
+  font-size: 90%;
+  padding: 4px;
+}
+
+#yzqfmavwzi .gt_sourcenotes {
+  color: #333333;
+  background-color: #FFFFFF;
+  border-bottom-style: none;
+  border-bottom-width: 2px;
+  border-bottom-color: #D3D3D3;
+  border-left-style: none;
+  border-left-width: 2px;
+  border-left-color: #D3D3D3;
+  border-right-style: none;
+  border-right-width: 2px;
+  border-right-color: #D3D3D3;
+}
+
+#yzqfmavwzi .gt_sourcenote {
+  font-size: 90%;
+  padding: 4px;
+}
+
+#yzqfmavwzi .gt_left {
+  text-align: left;
+}
+
+#yzqfmavwzi .gt_center {
+  text-align: center;
+}
+
+#yzqfmavwzi .gt_right {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+#yzqfmavwzi .gt_font_normal {
+  font-weight: normal;
+}
+
+#yzqfmavwzi .gt_font_bold {
+  font-weight: bold;
+}
+
+#yzqfmavwzi .gt_font_italic {
+  font-style: italic;
+}
+
+#yzqfmavwzi .gt_super {
+  font-size: 65%;
+}
+
+#yzqfmavwzi .gt_footnote_marks {
+  font-style: italic;
+  font-weight: normal;
+  font-size: 65%;
+}
+</style>
+<table class="gt_table">
+  
+  <thead class="gt_col_headings">
+    <tr>
+      <th class="gt_col_heading gt_columns_bottom_border gt_right" rowspan="1" colspan="1" style="font-weight: bold;">probability</th>
+      <th class="gt_col_heading gt_columns_bottom_border gt_left" rowspan="1" colspan="1" style="font-weight: bold;">description</th>
+      <th class="gt_col_heading gt_columns_bottom_border gt_left" rowspan="1" colspan="1" style="font-weight: bold;">variety</th>
+    </tr>
+  </thead>
+  <tbody class="gt_table_body">
+    <tr><td class="gt_row gt_right">0.8772564</td>
+<td class="gt_row gt_left">A touch blossomy against a core of ripe raspberry and cherry perfume, the nose on this traditional-method Pinot Noir sparkler is particularly alluring. The palate is elegant and fresh, marked by fine, mouthfilling mousse and delicate raspberry-candy finish.</td>
+<td class="gt_row gt_left">Sparkling Blend</td></tr>
+    <tr><td class="gt_row gt_right">0.8318367</td>
+<td class="gt_row gt_left">88—90 Barrel sample. Soft, open, the wood giving roundness to a spicy, rich wine. It will develop quickly.</td>
+<td class="gt_row gt_left">Bordeaux-style White Blend</td></tr>
+    <tr><td class="gt_row gt_right">0.9398980</td>
+<td class="gt_row gt_left">A fresh, strawberry-flavored wine, with good red berry and red apple-skin textures. The acidity is initially prominent, but then there is also a burst of candy, leaving softness.</td>
+<td class="gt_row gt_left">Champagne Blend</td></tr>
+    <tr><td class="gt_row gt_right">0.9663655</td>
+<td class="gt_row gt_left">This is a really fruity rosé that is full of red-berry fruits and bright acidity. Crisp on the palate with tart red-currant flavors, there's a tightness in acidity that could benefit with more integration. Let the bottle settle a few months before opening.</td>
+<td class="gt_row gt_left">Champagne Blend</td></tr>
+    <tr><td class="gt_row gt_right">0.9519207</td>
+<td class="gt_row gt_left">93—95 Barrel sample. Domaine de Chevalier's white has a reputation for long aging, and that's the case with 2006. It is the structure that does it, very firm, almost tannic. But the fruit is also a star, ripe, dense, with green plum flavors and touches of spice. Give this at least 10 years.</td>
+<td class="gt_row gt_left">Bordeaux-style White Blend</td></tr>
+  </tbody>
+  
+  
+</table>
+</div>
+<p>The above table just displays 5 of the false positives, but they give a flavor for what is going on. The model predicts these to be red wines, but they match up with white wine varieties. The descriptions of the Sparkling and Champagne Blends imply that these are actually pink/rose blends and, therefore, the language contains words like ‘red-currant’, ‘raspberry’, ‘strawberry’ and ‘cherry’. And the description of the Bordeaux-style White Blend variety uses terms like ‘wood’, ‘spicy’, ‘dense’ and ‘plum’, which would not readily be associated with white wines.</p>
+<p>On the flip side, the 201 false negatives correspond to the wine descriptions with a low probability of being red wines, but are actually red wine grapes.</p>
+<pre class="r"><code># Examine the descriptions for wines with a low probability of being red grapes,
+# but are actually red grapes
+gt(comment_classes %&gt;%
+  filter(
+    probability &lt; .3,
+    wine_color == &quot;Red&quot;
+  ) %&gt;%
+  slice(c(1, 5, 10, 15, 20)) %&gt;%
+  inner_join(base_model_data_variety %&gt;%
+    select(desc_ID, description, variety)) %&gt;%
+  select(probability, description, variety)) %&gt;%
+  tab_style(
+    style = cell_text(weight = &quot;bold&quot;),
+    locations = cells_column_labels()
+  )</code></pre>
+<div id="dgftkbjrhq" style="overflow-x:auto;overflow-y:auto;width:auto;height:auto;">
+<style>html {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Helvetica Neue', 'Fira Sans', 'Droid Sans', Arial, sans-serif;
+}
+
+#dgftkbjrhq .gt_table {
+  display: table;
+  border-collapse: collapse;
+  margin-left: auto;
+  margin-right: auto;
+  color: #333333;
+  font-size: 16px;
+  font-weight: normal;
+  font-style: normal;
+  background-color: #FFFFFF;
+  width: auto;
+  border-top-style: solid;
+  border-top-width: 2px;
+  border-top-color: #A8A8A8;
+  border-right-style: none;
+  border-right-width: 2px;
+  border-right-color: #D3D3D3;
+  border-bottom-style: solid;
+  border-bottom-width: 2px;
+  border-bottom-color: #A8A8A8;
+  border-left-style: none;
+  border-left-width: 2px;
+  border-left-color: #D3D3D3;
+}
+
+#dgftkbjrhq .gt_heading {
+  background-color: #FFFFFF;
+  text-align: center;
+  border-bottom-color: #FFFFFF;
+  border-left-style: none;
+  border-left-width: 1px;
+  border-left-color: #D3D3D3;
+  border-right-style: none;
+  border-right-width: 1px;
+  border-right-color: #D3D3D3;
+}
+
+#dgftkbjrhq .gt_title {
+  color: #333333;
+  font-size: 125%;
+  font-weight: initial;
+  padding-top: 4px;
+  padding-bottom: 4px;
+  border-bottom-color: #FFFFFF;
+  border-bottom-width: 0;
+}
+
+#dgftkbjrhq .gt_subtitle {
+  color: #333333;
+  font-size: 85%;
+  font-weight: initial;
+  padding-top: 0;
+  padding-bottom: 6px;
+  border-top-color: #FFFFFF;
+  border-top-width: 0;
+}
+
+#dgftkbjrhq .gt_bottom_border {
+  border-bottom-style: solid;
+  border-bottom-width: 2px;
+  border-bottom-color: #D3D3D3;
+}
+
+#dgftkbjrhq .gt_col_headings {
+  border-top-style: solid;
+  border-top-width: 2px;
+  border-top-color: #D3D3D3;
+  border-bottom-style: solid;
+  border-bottom-width: 2px;
+  border-bottom-color: #D3D3D3;
+  border-left-style: none;
+  border-left-width: 1px;
+  border-left-color: #D3D3D3;
+  border-right-style: none;
+  border-right-width: 1px;
+  border-right-color: #D3D3D3;
+}
+
+#dgftkbjrhq .gt_col_heading {
+  color: #333333;
+  background-color: #FFFFFF;
+  font-size: 100%;
+  font-weight: normal;
+  text-transform: inherit;
+  border-left-style: none;
+  border-left-width: 1px;
+  border-left-color: #D3D3D3;
+  border-right-style: none;
+  border-right-width: 1px;
+  border-right-color: #D3D3D3;
+  vertical-align: bottom;
+  padding-top: 5px;
+  padding-bottom: 6px;
+  padding-left: 5px;
+  padding-right: 5px;
+  overflow-x: hidden;
+}
+
+#dgftkbjrhq .gt_column_spanner_outer {
+  color: #333333;
+  background-color: #FFFFFF;
+  font-size: 100%;
+  font-weight: normal;
+  text-transform: inherit;
+  padding-top: 0;
+  padding-bottom: 0;
+  padding-left: 4px;
+  padding-right: 4px;
+}
+
+#dgftkbjrhq .gt_column_spanner_outer:first-child {
+  padding-left: 0;
+}
+
+#dgftkbjrhq .gt_column_spanner_outer:last-child {
+  padding-right: 0;
+}
+
+#dgftkbjrhq .gt_column_spanner {
+  border-bottom-style: solid;
+  border-bottom-width: 2px;
+  border-bottom-color: #D3D3D3;
+  vertical-align: bottom;
+  padding-top: 5px;
+  padding-bottom: 5px;
+  overflow-x: hidden;
+  display: inline-block;
+  width: 100%;
+}
+
+#dgftkbjrhq .gt_group_heading {
+  padding: 8px;
+  color: #333333;
+  background-color: #FFFFFF;
+  font-size: 100%;
+  font-weight: initial;
+  text-transform: inherit;
+  border-top-style: solid;
+  border-top-width: 2px;
+  border-top-color: #D3D3D3;
+  border-bottom-style: solid;
+  border-bottom-width: 2px;
+  border-bottom-color: #D3D3D3;
+  border-left-style: none;
+  border-left-width: 1px;
+  border-left-color: #D3D3D3;
+  border-right-style: none;
+  border-right-width: 1px;
+  border-right-color: #D3D3D3;
+  vertical-align: middle;
+}
+
+#dgftkbjrhq .gt_empty_group_heading {
+  padding: 0.5px;
+  color: #333333;
+  background-color: #FFFFFF;
+  font-size: 100%;
+  font-weight: initial;
+  border-top-style: solid;
+  border-top-width: 2px;
+  border-top-color: #D3D3D3;
+  border-bottom-style: solid;
+  border-bottom-width: 2px;
+  border-bottom-color: #D3D3D3;
+  vertical-align: middle;
+}
+
+#dgftkbjrhq .gt_from_md > :first-child {
+  margin-top: 0;
+}
+
+#dgftkbjrhq .gt_from_md > :last-child {
+  margin-bottom: 0;
+}
+
+#dgftkbjrhq .gt_row {
+  padding-top: 8px;
+  padding-bottom: 8px;
+  padding-left: 5px;
+  padding-right: 5px;
+  margin: 10px;
+  border-top-style: solid;
+  border-top-width: 1px;
+  border-top-color: #D3D3D3;
+  border-left-style: none;
+  border-left-width: 1px;
+  border-left-color: #D3D3D3;
+  border-right-style: none;
+  border-right-width: 1px;
+  border-right-color: #D3D3D3;
+  vertical-align: middle;
+  overflow-x: hidden;
+}
+
+#dgftkbjrhq .gt_stub {
+  color: #333333;
+  background-color: #FFFFFF;
+  font-size: 100%;
+  font-weight: initial;
+  text-transform: inherit;
+  border-right-style: solid;
+  border-right-width: 2px;
+  border-right-color: #D3D3D3;
+  padding-left: 12px;
+}
+
+#dgftkbjrhq .gt_summary_row {
+  color: #333333;
+  background-color: #FFFFFF;
+  text-transform: inherit;
+  padding-top: 8px;
+  padding-bottom: 8px;
+  padding-left: 5px;
+  padding-right: 5px;
+}
+
+#dgftkbjrhq .gt_first_summary_row {
+  padding-top: 8px;
+  padding-bottom: 8px;
+  padding-left: 5px;
+  padding-right: 5px;
+  border-top-style: solid;
+  border-top-width: 2px;
+  border-top-color: #D3D3D3;
+}
+
+#dgftkbjrhq .gt_grand_summary_row {
+  color: #333333;
+  background-color: #FFFFFF;
+  text-transform: inherit;
+  padding-top: 8px;
+  padding-bottom: 8px;
+  padding-left: 5px;
+  padding-right: 5px;
+}
+
+#dgftkbjrhq .gt_first_grand_summary_row {
+  padding-top: 8px;
+  padding-bottom: 8px;
+  padding-left: 5px;
+  padding-right: 5px;
+  border-top-style: double;
+  border-top-width: 6px;
+  border-top-color: #D3D3D3;
+}
+
+#dgftkbjrhq .gt_striped {
+  background-color: rgba(128, 128, 128, 0.05);
+}
+
+#dgftkbjrhq .gt_table_body {
+  border-top-style: solid;
+  border-top-width: 2px;
+  border-top-color: #D3D3D3;
+  border-bottom-style: solid;
+  border-bottom-width: 2px;
+  border-bottom-color: #D3D3D3;
+}
+
+#dgftkbjrhq .gt_footnotes {
+  color: #333333;
+  background-color: #FFFFFF;
+  border-bottom-style: none;
+  border-bottom-width: 2px;
+  border-bottom-color: #D3D3D3;
+  border-left-style: none;
+  border-left-width: 2px;
+  border-left-color: #D3D3D3;
+  border-right-style: none;
+  border-right-width: 2px;
+  border-right-color: #D3D3D3;
+}
+
+#dgftkbjrhq .gt_footnote {
+  margin: 0px;
+  font-size: 90%;
+  padding: 4px;
+}
+
+#dgftkbjrhq .gt_sourcenotes {
+  color: #333333;
+  background-color: #FFFFFF;
+  border-bottom-style: none;
+  border-bottom-width: 2px;
+  border-bottom-color: #D3D3D3;
+  border-left-style: none;
+  border-left-width: 2px;
+  border-left-color: #D3D3D3;
+  border-right-style: none;
+  border-right-width: 2px;
+  border-right-color: #D3D3D3;
+}
+
+#dgftkbjrhq .gt_sourcenote {
+  font-size: 90%;
+  padding: 4px;
+}
+
+#dgftkbjrhq .gt_left {
+  text-align: left;
+}
+
+#dgftkbjrhq .gt_center {
+  text-align: center;
+}
+
+#dgftkbjrhq .gt_right {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+#dgftkbjrhq .gt_font_normal {
+  font-weight: normal;
+}
+
+#dgftkbjrhq .gt_font_bold {
+  font-weight: bold;
+}
+
+#dgftkbjrhq .gt_font_italic {
+  font-style: italic;
+}
+
+#dgftkbjrhq .gt_super {
+  font-size: 65%;
+}
+
+#dgftkbjrhq .gt_footnote_marks {
+  font-style: italic;
+  font-weight: normal;
+  font-size: 65%;
+}
+</style>
+<table class="gt_table">
+  
+  <thead class="gt_col_headings">
+    <tr>
+      <th class="gt_col_heading gt_columns_bottom_border gt_right" rowspan="1" colspan="1" style="font-weight: bold;">probability</th>
+      <th class="gt_col_heading gt_columns_bottom_border gt_left" rowspan="1" colspan="1" style="font-weight: bold;">description</th>
+      <th class="gt_col_heading gt_columns_bottom_border gt_left" rowspan="1" colspan="1" style="font-weight: bold;">variety</th>
+    </tr>
+  </thead>
+  <tbody class="gt_table_body">
+    <tr><td class="gt_row gt_right">0.27832939</td>
+<td class="gt_row gt_left">This wine is totally fresh, with crisp red currant and riper banana flavors—a bright wine that's all fruit and refreshing acidity. The family has been in the wine business since 1811 and today works with some 50 small-production growers.</td>
+<td class="gt_row gt_left">Gamay</td></tr>
+    <tr><td class="gt_row gt_right">0.06627881</td>
+<td class="gt_row gt_left">Good, rich, fruited wine,with lively acidity and a pure fresh character. There is some maturity here, a wine with a fine texture, finishing with rich toast.</td>
+<td class="gt_row gt_left">Pinot Noir</td></tr>
+    <tr><td class="gt_row gt_right">0.18085699</td>
+<td class="gt_row gt_left">Dry and delicious, this lightly colored rosé opens with a compelling waft of rose water and exudes copper-pink color. A refreshingly searing acidity maintains vibrancy from start to finish, accented in grapefruit. This quaff is great on its own or throughout a meal.</td>
+<td class="gt_row gt_left">Zinfandel</td></tr>
+    <tr><td class="gt_row gt_right">0.04314249</td>
+<td class="gt_row gt_left">Copper-orange-pink in color, this wonderfully summery wine offers tart citrus and gravelly minerality, a taste of wet stone coated in just the right amount of sweetness.</td>
+<td class="gt_row gt_left">Pinot Noir</td></tr>
+    <tr><td class="gt_row gt_right">0.02791588</td>
+<td class="gt_row gt_left">Creamy notes of Red Delicious apple are tinged with hints of shortbread on the nose. These become more forward on the creamy palate as the frothy mousse amplifies them. This is dry, restrained and elegant with a wonderfully refreshing finish.</td>
+<td class="gt_row gt_left">Pinot Noir</td></tr>
+  </tbody>
+  
+  
+</table>
+</div>
+<p>Again, I chose to display just 5 of the false negatives in the above table, but they provide sufficient insight. Some of these descriptions suggest pink or sparkling wines. Also, some of the language used, such as ‘fresh’, ‘banana’, ‘bright’, ‘dry’, ‘grapefruit’, ‘citrus’, ‘creamy’ and ‘apple’ would traditionally be associated more so with white wines.</p>
+<p>The fact that I simply categorized grape varieties as either red or white wines, didn’t cater for the fact that some wines can be pink/rose, particularly some blends. A lot of the misclassifications occur due to this reason. Also, I learned that red pinot noir grapes can actually be used to make white wine, so that is another flaw with my blunt classification method. Despite this, I feel this post was a good exercise for me and I got to use tidytext, along with some of the tidymodels packages. I definitely hope to do some more posts using these tools.</p>
+</div>

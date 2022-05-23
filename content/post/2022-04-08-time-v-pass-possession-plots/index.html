@@ -1,0 +1,298 @@
+---
+title: "Possession analysis: Time vs Passes"
+subtitle: "2019 Champions League final: Liverpool v Tottenham Hotspur"
+author: "Conor Buckley"
+date: 2022-04-08
+categories: ["R", "Chart"]
+tags: ["R", "plot", "ggplot2", "soccer"]
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+
+
+<p>On TV, post-game soccer possession statistics are measured by the number of passess for each team during the game. In this post I explore possession using the freely available Statsbomb event level data from the 2019 Champions League final between Liverpool and Tottenham Hotspur. I thought it would be interesting to measure possession in two different ways: 1) simply count the number of passes each team makes, as they do on TV, and 2) use the event level data to cumulate the time for each event for both teams.</p>
+<p>Firstly, I load the required libraries and the data I need, along with setting a few variables.</p>
+<pre class="r chunk-style"><code># Load required libraries
+library(tidyverse)
+library(gridExtra)
+library(grid)</code></pre>
+<p>The StatsBomb data I use has already been processed to a certain extent. I pull the required CSV files from my GitHub repo. Please see <a href="../2022-03-18-get-data-from-statsbombr/">this post</a> which outlines how I originally pulled the StatsBomb data using the ‘StatsBombR’ package.</p>
+<pre class="r chunk-style"><code># This dataset contains event level data for the Liverpool v Spurs 2019 Champions
+# League final
+# 3,165 observations covering all the events that happened in the game
+# 157 features relating to passes, shots, goalkeepers, time measurement and much more
+match_1_clean &lt;- read_csv(&quot;https://raw.githubusercontent.com/buckleco/Portfolio_Data/main/Liv_v_Spurs_Event_Data.csv&quot;)
+
+# Get the high level details about each match in the StatsBomb free dataset
+matches &lt;- read_csv(&quot;https://raw.githubusercontent.com/buckleco/Portfolio_Data/main/matches.csv&quot;)</code></pre>
+<p>Before getting into the data, I set some variables and flags. This makes it easier to reuse this code in the future for other games.</p>
+<pre class="r chunk-style"><code># Set the selected match from the list of available matches
+selected_match &lt;- 1
+
+# Team Names
+home_team &lt;- matches[selected_match, ] %&gt;% pull(home_team.home_team_name)
+away_team &lt;- matches[selected_match, ] %&gt;% pull(away_team.away_team_name)
+
+# Colours
+home_team_colour &lt;- &quot;#28383b&quot; # Navy Blue
+away_team_colour &lt;- &quot;#D62828&quot; # Red
+gridline_colour &lt;- &quot;#CCCCCC&quot; # Light Grey</code></pre>
+<p>The purpose of this post is to create two line charts, one for each way of measuring possession. In order to do that, I need to create two different datasets, one containing only the passing data and the other one containing the event and time data. Firstly, I look at the number of passes per team.</p>
+<div id="plot-the-number-of-passes-per-team" class="section level2">
+<h2><strong>1. Plot the number of passes per team</strong></h2>
+<div id="manipulating-the-data" class="section level3">
+<h3><strong>Manipulating the Data</strong></h3>
+<p>Taking the event level data I loaded earlier, I filter it for pass events only and then count the number of passes per team. The final chart will be split into the first and second halves, so I also split the dataset into two parts.</p>
+<pre class="r chunk-style"><code># Pull the pass events from the base dataset
+pass_poss_tib &lt;- match_1_clean %&gt;%
+  filter(type.name == &quot;Pass&quot;) %&gt;%
+  select(ElapsedTime, team.name, type.name, pass.outcome.name, period) %&gt;%
+  group_by(team.name) %&gt;%
+  mutate(pass_count = row_number(team.name)) %&gt;%
+  select(-pass.outcome.name) %&gt;%
+  ungroup()
+
+# Set dataset for first half
+pass_poss_tib_1 &lt;- pass_poss_tib %&gt;%
+  filter(period == 1)
+
+# Extract the adjustment amount to reset the start time
+# for the second half to 2,700 seconds (45min)
+adj_amt_2 &lt;- pass_poss_tib %&gt;%
+  filter(period == 2) %&gt;%
+  filter(team.name == &quot;Tottenham Hotspur&quot;) %&gt;%
+  filter(pass_count == 291) %&gt;%
+  pull(ElapsedTime) - (45 * 60)
+
+# Set data for second half
+pass_poss_tib_2 &lt;- pass_poss_tib %&gt;%
+  filter(period == 2) %&gt;%
+  mutate(ElapsedTime = (ElapsedTime - adj_amt_2))</code></pre>
+</div>
+<div id="creating-the-chart" class="section level3">
+<h3><strong>Creating the chart</strong></h3>
+<p>The chart consists of two ggplot2 charts displayed together using the gridExtra package. Firstly, I create the two ggplot2 charts, one for each half. I reformat the x-axis, so it displays in minutes and I scale the y-axis, so that it is scaled for both halves and is only displayed in the first chart, which will be on the left of the final plot. I only keep the legend in the second plot.</p>
+<pre class="r chunk-style"><code># Create the left hand side of the chart
+# Plotting the count of passes per team in the first half
+pass_poss_plot_1 &lt;- pass_poss_tib_1 %&gt;%
+  ggplot(aes(x = ElapsedTime)) +
+  geom_line(aes(y = pass_count, colour = team.name), size = 1) +
+  scale_color_manual(values = setNames(
+    c(home_team_colour, away_team_colour),
+    c(home_team, away_team)
+  )) +
+  scale_x_time(
+    breaks = c(0, (15 * 60), (30 * 60), (45 * 60)),
+    labels = c(0, (15), (30), (45)),
+    limits = c(0, max(pass_poss_tib_1$ElapsedTime))
+  ) +
+  scale_y_continuous(expand = c(0, 0), limits = c(0, 575)) +
+  theme(
+    legend.position = &quot;none&quot;,
+    axis.ticks.y = element_blank(),
+    panel.grid.major = element_blank(),
+    panel.grid.major.x = element_line(color = gridline_colour),
+    panel.grid.major.y = element_line(color = gridline_colour),
+    panel.grid.minor = element_blank(),
+    panel.background = element_blank()
+  ) +
+  labs(x = &quot;First Half&quot;, y = &quot;Pass Count&quot;)
+
+# Create the right hand side of the chart
+# Plotting the count of passes per team in the second half
+# This part of the plot also includes the legend
+pass_poss_plot_2 &lt;- pass_poss_tib_2 %&gt;%
+  ggplot(aes(x = ElapsedTime)) +
+  geom_line(aes(y = pass_count, colour = team.name), size = 1) +
+  scale_color_manual(values = setNames(
+    c(home_team_colour, away_team_colour),
+    c(home_team, away_team)
+  )) +
+  scale_x_time(
+    breaks = c((45 * 60), (60 * 60), (75 * 60), (90 * 60)),
+    labels = c((45), (60), (75), (90)),
+    limits = c(
+      min(pass_poss_tib_2$ElapsedTime),
+      max(pass_poss_tib_2$ElapsedTime)
+    )
+  ) +
+  scale_y_continuous(expand = c(0, 0), limits = c(0, 575)) +
+  theme(
+    legend.key = element_rect(fill = &quot;white&quot;), # background of legend icon
+    axis.title.y = element_blank(),
+    axis.text.y = element_blank(),
+    axis.ticks.y = element_blank(),
+    panel.grid.major = element_blank(),
+    panel.grid.major.x = element_line(color = gridline_colour),
+    panel.grid.major.y = element_line(color = gridline_colour),
+    panel.grid.minor = element_blank(),
+    panel.background = element_blank()
+  ) +
+  labs(x = &quot;Second Half&quot;, colour = &quot;Team&quot;)</code></pre>
+<p>I now have two charts that need to be combined into one final chart:</p>
+<ul>
+<li>pass_poss_plot_1 (first half chart)</li>
+<li>pass_poss_plot_2 (second half chart)</li>
+</ul>
+<pre class="r chunk-style"><code># Using the gridExtra package arrange the two plots into one chart
+grid.arrange(pass_poss_plot_1, pass_poss_plot_2,
+  ncol = 2, widths = c(3.8, 5.2), # c(3.5,3,1),
+  top = textGrob(&quot;Number of passes per team&quot;, gp = gpar(fontsize = 14))
+)</code></pre>
+<p><img src="{{< blogdown/postref >}}index_files/figure-html/unnamed-chunk-6-1.png" width="672" /></p>
+</div>
+</div>
+<div id="plot-the-amount-of-time-in-possession-per-team" class="section level2">
+<h2><strong>2. Plot the amount of time in possession per team</strong></h2>
+<div id="manipulating-the-data-1" class="section level3">
+<h3><strong>Manipulating the Data</strong></h3>
+<p>In the second part of this post I create the datasets containing the cumulative amount of time across all the events for each team. Again, taking the event level data, I calculate the start and end time of each possession and I delete all the events for each possession except the first and last events. I also delete possessions that are zero seconds long. I then calculate the cumulative time in possession for each team. As the final chart will again be split into two halves, I do the same with the data.</p>
+<pre class="r chunk-style"><code># Calculate the cumulative time in possession for each team
+# A given possession can be made up of many events
+# I am only interested in the time of the first and last events of each possession
+poss_tib &lt;- match_1_clean %&gt;%
+  select(
+    index, timestamp, minute, second, period, possession, possession_team.id,
+    possession_team.name, duration, type.name, play_pattern.name,
+    ElapsedTime, StartOfPossession, TimeInPoss, TimeToPossEnd
+  ) %&gt;%
+  mutate(EventFlag = case_when(
+    TimeInPoss == 0 ~ &quot;StartTime&quot;,
+    TimeToPossEnd == 0 ~ &quot;EndTime&quot;,
+    TRUE ~ &quot;Event&quot;
+  )) %&gt;% # distinguish between first, last
+  # and middle events for a given possession
+  select(
+    possession, possession_team.name, EventFlag,
+    ElapsedTime, TimeInPoss, TimeToPossEnd, period
+  ) %&gt;%
+  filter(!EventFlag == &quot;Event&quot;) %&gt;% # remove the non first or last events
+  mutate(TimeDiff = (TimeInPoss - TimeToPossEnd)) %&gt;%
+  filter(!TimeDiff == 0) %&gt;% # remove the possessions that are zero seconds long
+  group_by(possession, possession_team.name, EventFlag, ElapsedTime, period) %&gt;%
+  count() %&gt;% # this puts mutiple entries with the same ElapsedTime on the sane row
+  ungroup() %&gt;%
+  select(!n) %&gt;% # remove the count
+  arrange(ElapsedTime) %&gt;% # make sure it is ordered correctly
+  pivot_wider(
+    names_from = EventFlag,
+    values_from = ElapsedTime
+  ) %&gt;% # StartTime and EndTime as columns
+  filter(!is.na(StartTime)) %&gt;% # remove the NA; first row of 2nd half
+  mutate(PossTime = EndTime - StartTime) %&gt;%
+  group_by((possession_team.name)) %&gt;%
+  mutate(CumTime = cumsum(PossTime)) %&gt;%
+  ungroup() %&gt;%
+  select(StartTime, CumTime, possession_team.name, period)
+
+# Extract the adjustment amount to reset the start time
+# for the second half to 2,700 seconds (45min)
+adj_amt &lt;- poss_tib %&gt;%
+  filter(period == 2) %&gt;%
+  filter(CumTime == 1002.514) %&gt;% # first row of the 2nd half
+  pull(StartTime) - (45 * 60)
+
+# Split the data out for the first half into a mini dataset
+time_poss_tib_1 &lt;- poss_tib %&gt;%
+  filter(period == 1) # keep the first half only
+
+# Split the data out for the second half into a mini dataset
+# Adjust the start time of the seconf half back to 45mins (2,700 seconds)
+time_poss_tib_2 &lt;- poss_tib %&gt;%
+  filter(period == 2) %&gt;% # keep the second half only
+  mutate(StartTime = (StartTime - adj_amt)) # %&gt;% # adjust the StartTime
+# so it starts at 2,700 seconds</code></pre>
+</div>
+<div id="creating-the-chart-1" class="section level3">
+<h3><strong>Creating the chart</strong></h3>
+<p>To create the time based possession chart, I follow a very similar process to the one I used for the pass possession chart above. Additionally, I format the y-axis to be displayed in minutes rather than seconds.</p>
+<pre class="r chunk-style"><code># Create the left hand side of the chart
+# Plotting the amount of time in possession per team in the first half
+time_poss_plot_1 &lt;- time_poss_tib_1 %&gt;%
+  ggplot(aes(x = StartTime)) +
+  geom_line(aes(y = CumTime, colour = possession_team.name), size = 1) +
+  scale_color_manual(values = setNames(
+    c(home_team_colour, away_team_colour),
+    c(home_team, away_team)
+  )) +
+  scale_x_time(
+    breaks = c(0, (15 * 60), (30 * 60), (45 * 60)),
+    labels = c(0, (15), (30), (45)),
+    limits = c(
+      min(time_poss_tib_1$StartTime),
+      max(time_poss_tib_1$StartTime)
+    )
+  ) +
+  scale_y_time(
+    breaks = c(
+      0, (5 * 60), (10 * 60), (15 * 60), (20 * 60),
+      (25 * 60), (30 * 60), (35 * 60), (40 * 60)
+    ),
+    labels = c(0, (5), (10), (15), (20), (25), (30), (35), (40)),
+    limits = c(0, 2200)
+  ) +
+  theme(
+    legend.position = &quot;none&quot;,
+    axis.ticks.y = element_blank(),
+    panel.grid.major = element_blank(),
+    panel.grid.major.x = element_line(color = gridline_colour),
+    panel.grid.major.y = element_line(color = gridline_colour),
+    panel.grid.minor = element_blank(),
+    panel.background = element_blank()
+  ) +
+  labs(x = &quot;First Half&quot;, y = &quot;Cumulative Time in Possession&quot;)
+
+# Create the right hand side of the chart
+# Plotting the amount of time in possession per team in the second half
+# This part of the plot also includes the legend
+time_poss_plot_2 &lt;- time_poss_tib_2 %&gt;%
+  ggplot(aes(x = StartTime)) +
+  geom_line(aes(y = CumTime, colour = possession_team.name), size = 1) +
+  scale_color_manual(values = setNames(
+    c(home_team_colour, away_team_colour),
+    c(home_team, away_team)
+  )) +
+  scale_x_time(
+    breaks = c((45 * 60), (60 * 60), (75 * 60), (90 * 60)),
+    labels = c((45), (60), (75), (90)),
+    limits = c(
+      min(time_poss_tib_2$StartTime),
+      max(time_poss_tib_2$StartTime)
+    )
+  ) +
+  scale_y_time(
+    breaks = c(
+      0, (5 * 60), (10 * 60), (15 * 60), (20 * 60),
+      (25 * 60), (30 * 60), (35 * 60), (40 * 60)
+    ),
+    labels = c(0, (5), (10), (15), (20), (25), (30), (35), (40)),
+    limits = c(0, 2200)
+  ) +
+  theme(
+    legend.key = element_rect(fill = &quot;white&quot;),
+    axis.title.y = element_blank(),
+    axis.text.y = element_blank(),
+    axis.ticks.y = element_blank(),
+    panel.grid.major = element_blank(),
+    panel.grid.major.x = element_line(color = gridline_colour),
+    panel.grid.major.y = element_line(color = gridline_colour),
+    panel.grid.minor = element_blank(),
+    panel.background = element_blank()
+  ) +
+  labs(x = &quot;Second Half&quot;, colour = &quot;Team&quot;)</code></pre>
+<p>I now have two charts that need to be combined into one final chart:</p>
+<ul>
+<li>time_poss_plot_1 (first half chart)</li>
+<li>time_poss_plot_2 (second half chart)</li>
+</ul>
+<pre class="r chunk-style"><code># Using the gridExtra package arrange all the plots into one plot
+grid.arrange(time_poss_plot_1, time_poss_plot_2,
+  ncol = 2, widths = c(3.8, 5.2), # c(3.5,3,1),
+  top = textGrob(&quot;Time in possession&quot;, gp = gpar(fontsize = 14))
+)</code></pre>
+<p><img src="{{< blogdown/postref >}}index_files/figure-html/unnamed-chunk-9-1.png" width="672" /></p>
+<p>As expected both charts follow a similar pattern. For possession measured by number of passes, Spurs finished with 564 passes (63%) and Liverpool had a total of 326 passes (37%). Whereas, for cumulative time in possession of the ball the final breakdown is Spurs with 36m 05s in possession of the ball (68%) and Liverpool with 17m 22s (32%).</p>
+</div>
+</div>

@@ -1,0 +1,47 @@
+---
+title: "A brief introduction to the 'Tidy Tuesday' project"
+subtitle: "A different dataset every Tuesday"
+author: "Conor Buckley"
+date: 2022-03-11
+categories: ["R", "Data"]
+tags: ["R", "plot", "ggplot2", "tidy tuesday"]
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+
+
+<p>A number of my posts source data via the ‘Tidy Tuesday’ project, so I thought it would make sense for me to provide some further information on this project. Every Tuesday a new dataset is provided and people are encouraged to wrangle the data and create a visualisation using the R tidyverse (although other code based methodologies are also welcome). People can post their code and output on twitter (#TidyTuesday). The project was originally co-founded by <a href="https://twitter.com/thomas_mock">Thomas Mock</a> in 2018.</p>
+<p>The <a href="https://github.com/rfordatascience/tidytuesday">Tidy Tuesday github repository</a> is an excellent starting point to learn more about the project. It contains some background to the project, participant guidelines and guidance, along with all the weekly datasets.</p>
+<p>Owing to the popularity of the project, an R package, tidytuesdayR, was also developed. This allows for easy access to the datasets from within R. For example, if I wanted to access the original craft beer dataset I used in <a href="../2022-01-14-interactive-beer-reactable/">this post</a>, I can bring back a list of all the tidy tuesday datasets and then call the relevant dataset using the appropriate tidy tuesday date.</p>
+<pre class="r chunk-style"><code># Load tidy tuesday library
+library(tidytuesdayR)</code></pre>
+<pre class="r chunk-style"><code># Obtain all the available tidy tuesday datasets
+# Do a check first to make sure daily query limit has not been reached
+# Note, I don&#39;t execute this code here as it returns many, many rows
+if (rate_limit_check(quiet = TRUE) &gt; 10) {
+  all_available_datasets &lt;- tt_available()
+  print(all_available_datasets)
+}</code></pre>
+<p>The craft beer dataset was used for Tidy Tuesday on July 10th 2018. Therefore, the dataset can be imported via the tidytuesdayR package using this date.</p>
+<pre class="r chunk-style"><code># Using the tidy tuesday date sourced from the table above load the dataset
+# Do a check first to make sure daily query limit has not been reached
+if (rate_limit_check(quiet = TRUE) &gt; 10) {
+  craft_beer_data &lt;- tt_load(&quot;2018-07-10&quot;)
+  head(craft_beer_data$week15_beers)
+}</code></pre>
+<pre><code>## 
+##  Downloading file 1 of 1: `week15_beers.xlsx`</code></pre>
+<pre><code>## # A tibble: 6 x 8
+##   count   abv   ibu    id name                style            brewery_id ounces
+##   &lt;dbl&gt; &lt;dbl&gt; &lt;dbl&gt; &lt;dbl&gt; &lt;chr&gt;               &lt;chr&gt;                 &lt;dbl&gt;  &lt;dbl&gt;
+## 1     1 0.05     NA  1436 Pub Beer            American Pale L~        408     12
+## 2     2 0.066    NA  2265 Devil&#39;s Cup         American Pale A~        177     12
+## 3     3 0.071    NA  2264 Rise of the Phoenix American IPA            177     12
+## 4     4 0.09     NA  2263 Sinister            American Double~        177     12
+## 5     5 0.075    NA  2262 Sex and Candy       American IPA            177     12
+## 6     6 0.077    NA  2261 Black Exodus        Oatmeal Stout           177     12</code></pre>
+<p>Also, I found this <a href="https://nsgrantham.shinyapps.io/tidytuesdayrocks/">R Shiny App</a> useful for browsing submissions people made under the #TidyTuesday twitter hashtag. It doesn’t look like it has been updated in a while, but it is still very interesting.</p>
+<p>Another good resource is this <a href="https://www.youtube.com/playlist?list=PL19ev-r1GBwkuyiwnxoHTRC8TTqP8OEi8">list of youtube videos</a> by <a href="https://twitter.com/drob?lang=en">David Robinson</a>. In each video David takes a look at a Tidy Tuesday dataset livecoding his analysis and visualisations in R.</p>
+<p>If you are searching for inspiration for a small personal data project, then I recommend looking through the datasets in the Tidy Tuesday github repository and checking out the submissions based on those datasets under the #TidyTuesday hashtag on twitter. If you are not on Twitter, then you can access the raw tweets via the github repository. See this <a href="https://themockup.blog/posts/2021-04-01-three-years-of-tidytuesday/#alt-text-for-graphs">article</a> for details on how to do that.</p>

@@ -1,0 +1,255 @@
+---
+title: "Using StatsBombR to obtain soccer data"
+subtitle: "Event level soccer data"
+author: "Conor Buckley"
+date: 2022-03-18
+categories: ["R", "Data"]
+tags: ["R", "plot", "ggplot2", "soccer"]
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+
+
+<p>This post shows how I used the ‘StatsBombR’ R package to get freely available soccer data provided by StatsBomb. <a href="https://statsbomb.com/">StatsBomb</a> is a sports data company and they provide free online samples of some of their professional level data. One way to access this free data is through their StatsBombR R package. Using this package I demonstrate how to extract the event level dataset for the 2019 Champions League final between Liverpool and Tottenham Hotspur.</p>
+<p>Firstly, I load the required libraries for this post.</p>
+<pre class="r chunk-style"><code># Load required libraries
+library(StatsBombR)
+library(tidyverse)</code></pre>
+<p>Using the FreeCompetitions() function from StatsBombR I obtain all the competitions that have free data available. For those competitions, I obtain the matches with free data. This results in 40 competitions with a total of 1,096 matches.</p>
+<pre class="r chunk-style"><code># Get the data via StatsBombR package
+comps &lt;- FreeCompetitions() # get the available competitions (40x12)</code></pre>
+<pre class="r chunk-style"><code>glimpse(comps)</code></pre>
+<pre><code>## Rows: 40
+## Columns: 12
+## $ competition_id            &lt;int&gt; 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, ~
+## $ season_id                 &lt;int&gt; 4, 1, 2, 27, 26, 25, 24, 23, 22, 21, 41, 39,~
+## $ country_name              &lt;chr&gt; &quot;Europe&quot;, &quot;Europe&quot;, &quot;Europe&quot;, &quot;Europe&quot;, &quot;Eur~
+## $ competition_name          &lt;chr&gt; &quot;Champions League&quot;, &quot;Champions League&quot;, &quot;Cha~
+## $ competition_gender        &lt;chr&gt; &quot;male&quot;, &quot;male&quot;, &quot;male&quot;, &quot;male&quot;, &quot;male&quot;, &quot;mal~
+## $ competition_youth         &lt;lgl&gt; FALSE, FALSE, FALSE, FALSE, FALSE, FALSE, FA~
+## $ competition_international &lt;lgl&gt; FALSE, FALSE, FALSE, FALSE, FALSE, FALSE, FA~
+## $ season_name               &lt;chr&gt; &quot;2018/2019&quot;, &quot;2017/2018&quot;, &quot;2016/2017&quot;, &quot;2015~
+## $ match_updated             &lt;chr&gt; &quot;2021-08-27T11:26:39.802832&quot;, &quot;2021-08-27T11~
+## $ match_updated_360         &lt;chr&gt; &quot;2021-06-13T16:17:31.694&quot;, &quot;2021-06-13T16:17~
+## $ match_available_360       &lt;chr&gt; NA, NA, NA, NA, NA, NA, NA, NA, NA, NA, NA, ~
+## $ match_available           &lt;chr&gt; &quot;2021-07-09T14:06:05.802&quot;, &quot;2021-01-23T21:55~</code></pre>
+<p>Using the FreeMatches() function from StatsBombR I obtain all the matches that have free data available. This dataset corresponds to this dataset in my <a href="https://github.com/buckleco/Portfolio_Data/blob/main/matches.csv">Github repo</a>, which I use in some other blog posts.</p>
+<pre class="r chunk-style"><code>matches &lt;- FreeMatches(comps) # get the available matches in those competitions (1,096x42)</code></pre>
+<pre class="r chunk-style"><code>glimpse(matches)</code></pre>
+<pre><code>## Rows: 1,096
+## Columns: 42
+## $ match_id                       &lt;int&gt; 22912, 18245, 18244, 18243, 18242, 1824~
+## $ match_date                     &lt;chr&gt; &quot;2019-06-01&quot;, &quot;2018-05-26&quot;, &quot;2017-06-03~
+## $ kick_off                       &lt;chr&gt; &quot;21:00:00.000&quot;, &quot;20:45:00.000&quot;, &quot;20:45:~
+## $ home_score                     &lt;int&gt; 0, 3, 1, 1, 1, 4, 1, 1, 3, 0, 2, 2, 3, ~
+## $ away_score                     &lt;int&gt; 2, 1, 4, 1, 3, 1, 2, 1, 1, 2, 0, 1, 3, ~
+## $ match_status                   &lt;chr&gt; &quot;available&quot;, &quot;available&quot;, &quot;available&quot;, ~
+## $ match_status_360               &lt;chr&gt; &quot;scheduled&quot;, &quot;scheduled&quot;, &quot;scheduled&quot;, ~
+## $ last_updated                   &lt;chr&gt; &quot;2020-07-29T05:00&quot;, &quot;2021-01-23T21:55:3~
+## $ last_updated_360               &lt;chr&gt; &quot;2021-06-13T16:17:31.694&quot;, &quot;2021-06-13T~
+## $ match_week                     &lt;int&gt; 13, 7, 7, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,~
+## $ competition.competition_id     &lt;int&gt; 16, 16, 16, 16, 16, 16, 16, 16, 16, 16,~
+## $ competition.country_name       &lt;chr&gt; &quot;Europe&quot;, &quot;Europe&quot;, &quot;Europe&quot;, &quot;Europe&quot;,~
+## $ competition.competition_name   &lt;chr&gt; &quot;Champions League&quot;, &quot;Champions League&quot;,~
+## $ season.season_id               &lt;int&gt; 4, 1, 2, 27, 26, 25, 24, 23, 22, 21, 41~
+## $ season.season_name             &lt;chr&gt; &quot;2018/2019&quot;, &quot;2017/2018&quot;, &quot;2016/2017&quot;, ~
+## $ home_team.home_team_id         &lt;int&gt; 38, 220, 224, 220, 224, 220, 180, 169, ~
+## $ home_team.home_team_name       &lt;chr&gt; &quot;Tottenham Hotspur&quot;, &quot;Real Madrid&quot;, &quot;Ju~
+## $ home_team.home_team_gender     &lt;chr&gt; &quot;male&quot;, &quot;male&quot;, &quot;male&quot;, &quot;male&quot;, &quot;male&quot;,~
+## $ home_team.home_team_group      &lt;chr&gt; NA, NA, NA, NA, NA, NA, NA, NA, NA, NA,~
+## $ home_team.managers             &lt;list&gt; [&lt;data.frame[1 x 6]&gt;], [&lt;data.frame[1 ~
+## $ home_team.country.id           &lt;int&gt; 68, 214, 112, 214, 112, 214, 85, 85, 21~
+## $ home_team.country.name         &lt;chr&gt; &quot;England&quot;, &quot;Spain&quot;, &quot;Italy&quot;, &quot;Spain&quot;, &quot;~
+## $ away_team.away_team_id         &lt;int&gt; 24, 24, 220, 212, 217, 212, 169, 33, 39~
+## $ away_team.away_team_name       &lt;chr&gt; &quot;Liverpool&quot;, &quot;Liverpool&quot;, &quot;Real Madrid&quot;~
+## $ away_team.away_team_gender     &lt;chr&gt; &quot;male&quot;, &quot;male&quot;, &quot;male&quot;, &quot;male&quot;, &quot;male&quot;,~
+## $ away_team.away_team_group      &lt;chr&gt; NA, NA, NA, NA, NA, NA, NA, NA, NA, NA,~
+## $ away_team.managers             &lt;list&gt; [&lt;data.frame[1 x 6]&gt;], [&lt;data.frame[1 ~
+## $ away_team.country.id           &lt;int&gt; 68, 68, 214, 214, 214, 214, 85, 68, 68,~
+## $ away_team.country.name         &lt;chr&gt; &quot;England&quot;, &quot;England&quot;, &quot;Spain&quot;, &quot;Spain&quot;,~
+## $ metadata.data_version          &lt;chr&gt; &quot;1.1.0&quot;, &quot;1.1.0&quot;, &quot;1.0.3&quot;, &quot;1.0.3&quot;, &quot;1.~
+## $ metadata.shot_fidelity_version &lt;chr&gt; &quot;2&quot;, &quot;2&quot;, NA, NA, NA, NA, NA, NA, NA, N~
+## $ metadata.xy_fidelity_version   &lt;chr&gt; &quot;2&quot;, &quot;2&quot;, NA, NA, NA, NA, NA, NA, NA, N~
+## $ competition_stage.id           &lt;int&gt; 26, 26, 26, 26, 26, 26, 26, 26, 26, 26,~
+## $ competition_stage.name         &lt;chr&gt; &quot;Final&quot;, &quot;Final&quot;, &quot;Final&quot;, &quot;Final&quot;, &quot;Fi~
+## $ stadium.id                     &lt;int&gt; 4654, 4222, 113891, 388, 367, 611, 4666~
+## $ stadium.name                   &lt;chr&gt; &quot;Estadio Wanda Metropolitano&quot;, &quot;NSK Oli~
+## $ stadium.country.id             &lt;int&gt; 214, 238, 249, 112, 85, 183, 68, 85, 68~
+## $ stadium.country.name           &lt;chr&gt; &quot;Spain&quot;, &quot;Ukraine&quot;, &quot;Wales&quot;, &quot;Italy&quot;, &quot;~
+## $ referee.id                     &lt;int&gt; 420, 727, 186, 728, 581, 287, 419, 717,~
+## $ referee.name                   &lt;chr&gt; &quot;Damir Skomina&quot;, &quot;Milorad MaÅ¾iÄ‡&quot;, &quot;Fe~
+## $ referee.country.id             &lt;int&gt; 208, 203, 85, 68, 233, 160, 112, 183, 1~
+## $ referee.country.name           &lt;chr&gt; &quot;Slovenia&quot;, &quot;Serbia&quot;, &quot;Germany&quot;, &quot;Engla~</code></pre>
+<p>The last step is to extract the event level data for a specific match. For this, I chose the 2019 Champions League final between Liverpool and Tottenham Hotspur.</p>
+<pre class="r chunk-style"><code># Match number you want to select from the matches dataframe
+selected_match &lt;- 1 # Liv v Spurs is the first entry
+
+# Select Liverpool v Spurs 2019 Champions League Final
+match_1 &lt;- get.matchFree(matches[selected_match, ]) # (3,165x120)
+
+# Apply the StatsBomb allclean function to get the base dataset
+# The allclean() function cleans and enriches the dataset for use
+match_1_clean &lt;- allclean(match_1) # (3,165x157)</code></pre>
+<pre class="r chunk-style"><code>glimpse(match_1_clean)</code></pre>
+<pre><code>## Rows: 3,165
+## Columns: 157
+## $ id                             &lt;chr&gt; &quot;c4341845-358d-43e7-9af4-9a39aa1d90f1&quot;,~
+## $ index                          &lt;int&gt; 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, ~
+## $ period                         &lt;dbl&gt; 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, ~
+## $ timestamp                      &lt;chr&gt; &quot;00:00:00.000&quot;, &quot;00:00:00.000&quot;, &quot;00:00:~
+## $ minute                         &lt;int&gt; 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, ~
+## $ second                         &lt;int&gt; 0, 0, 0, 0, 0, 1, 1, 3, 5, 5, 7, 7, 8, ~
+## $ possession                     &lt;int&gt; 1, 1, 1, 1, 2, 2, 2, 2, 2, 2, 2, 2, 2, ~
+## $ duration                       &lt;dbl&gt; 0.000000, 0.000000, 0.000000, 0.000000,~
+## $ related_events                 &lt;list&gt; &lt;NULL&gt;, &lt;NULL&gt;, &quot;97668e09-1ce7-4752-91~
+## $ location                       &lt;list&gt; &lt;NULL&gt;, &lt;NULL&gt;, &lt;NULL&gt;, &lt;NULL&gt;, &lt;61, 4~
+## $ under_pressure                 &lt;lgl&gt; NA, NA, NA, NA, NA, NA, NA, NA, NA, NA,~
+## $ off_camera                     &lt;lgl&gt; NA, NA, NA, NA, NA, NA, NA, NA, NA, NA,~
+## $ counterpress                   &lt;lgl&gt; NA, NA, NA, NA, NA, NA, NA, NA, NA, NA,~
+## $ out                            &lt;lgl&gt; NA, NA, NA, NA, NA, NA, NA, NA, NA, NA,~
+## $ type.id                        &lt;int&gt; 35, 35, 18, 18, 30, 42, 43, 30, 42, 30,~
+## $ type.name                      &lt;chr&gt; &quot;Starting XI&quot;, &quot;Starting XI&quot;, &quot;Half Sta~
+## $ possession_team.id             &lt;int&gt; 38, 38, 38, 38, 24, 24, 24, 24, 24, 24,~
+## $ possession_team.name           &lt;chr&gt; &quot;Tottenham Hotspur&quot;, &quot;Tottenham Hotspur~
+## $ play_pattern.id                &lt;int&gt; 1, 1, 1, 1, 9, 9, 9, 9, 9, 9, 9, 9, 9, ~
+## $ play_pattern.name              &lt;chr&gt; &quot;Regular Play&quot;, &quot;Regular Play&quot;, &quot;Regula~
+## $ team.id                        &lt;int&gt; 38, 24, 24, 38, 24, 24, 24, 24, 24, 38,~
+## $ team.name                      &lt;chr&gt; &quot;Tottenham Hotspur&quot;, &quot;Liverpool&quot;, &quot;Live~
+## $ tactics.formation              &lt;int&gt; 4231, 433, NA, NA, NA, NA, NA, NA, NA, ~
+## $ tactics.lineup                 &lt;list&gt; [&lt;data.frame[11 x 5]&gt;], [&lt;data.frame[1~
+## $ player.id                      &lt;int&gt; NA, NA, NA, NA, 3532, 3502, 3502, 3502,~
+## $ player.name                    &lt;chr&gt; NA, NA, NA, NA, &quot;Jordan Brian Henderson~
+## $ position.id                    &lt;int&gt; NA, NA, NA, NA, 13, 3, 3, 3, 21, 2, 23,~
+## $ position.name                  &lt;chr&gt; NA, NA, NA, NA, &quot;Right Center Midfield&quot;~
+## $ pass.length                    &lt;dbl&gt; NA, NA, NA, NA, 26.360956, NA, NA, 64.7~
+## $ pass.angle                     &lt;dbl&gt; NA, NA, NA, NA, 3.00076870, NA, NA, -0.~
+## $ pass.end_location              &lt;list&gt; &lt;NULL&gt;, &lt;NULL&gt;, &lt;NULL&gt;, &lt;NULL&gt;, &lt;34.9,~
+## $ pass.switch                    &lt;lgl&gt; NA, NA, NA, NA, NA, NA, NA, TRUE, NA, N~
+## $ pass.aerial_won                &lt;lgl&gt; NA, NA, NA, NA, NA, NA, NA, NA, NA, NA,~
+## $ pass.through_ball              &lt;lgl&gt; NA, NA, NA, NA, NA, NA, NA, NA, NA, NA,~
+## $ pass.inswinging                &lt;lgl&gt; NA, NA, NA, NA, NA, NA, NA, NA, NA, NA,~
+## $ pass.straight                  &lt;lgl&gt; NA, NA, NA, NA, NA, NA, NA, NA, NA, NA,~
+## $ pass.cross                     &lt;lgl&gt; NA, NA, NA, NA, NA, NA, NA, NA, NA, NA,~
+## $ pass.assisted_shot_id          &lt;chr&gt; NA, NA, NA, NA, NA, NA, NA, NA, NA, NA,~
+## $ pass.shot_assist               &lt;lgl&gt; NA, NA, NA, NA, NA, NA, NA, NA, NA, NA,~
+## $ pass.outswinging               &lt;lgl&gt; NA, NA, NA, NA, NA, NA, NA, NA, NA, NA,~
+## $ pass.cut_back                  &lt;lgl&gt; NA, NA, NA, NA, NA, NA, NA, NA, NA, NA,~
+## $ pass.deflected                 &lt;lgl&gt; NA, NA, NA, NA, NA, NA, NA, NA, NA, NA,~
+## $ pass.goal_assist               &lt;lgl&gt; NA, NA, NA, NA, NA, NA, NA, NA, NA, NA,~
+## $ pass.recipient.id              &lt;int&gt; NA, NA, NA, NA, 3502, NA, NA, 3629, NA,~
+## $ pass.recipient.name            &lt;chr&gt; NA, NA, NA, NA, &quot;Joël Andre Job Matip&quot;,~
+## $ pass.height.id                 &lt;int&gt; NA, NA, NA, NA, 1, NA, NA, 3, NA, 3, NA~
+## $ pass.height.name               &lt;chr&gt; NA, NA, NA, NA, &quot;Ground Pass&quot;, NA, NA, ~
+## $ pass.body_part.id              &lt;int&gt; NA, NA, NA, NA, 40, NA, NA, 40, NA, 37,~
+## $ pass.body_part.name            &lt;chr&gt; NA, NA, NA, NA, &quot;Right Foot&quot;, NA, NA, &quot;~
+## $ pass.type.id                   &lt;int&gt; NA, NA, NA, NA, 65, NA, NA, NA, NA, 66,~
+## $ pass.type.name                 &lt;chr&gt; NA, NA, NA, NA, &quot;Kick Off&quot;, NA, NA, NA,~
+## $ pass.outcome.id                &lt;int&gt; NA, NA, NA, NA, NA, NA, NA, 9, NA, 9, N~
+## $ pass.outcome.name              &lt;chr&gt; NA, NA, NA, NA, NA, NA, NA, &quot;Incomplete~
+## $ pass.technique.id              &lt;int&gt; NA, NA, NA, NA, NA, NA, NA, NA, NA, NA,~
+## $ pass.technique.name            &lt;chr&gt; NA, NA, NA, NA, NA, NA, NA, NA, NA, NA,~
+## $ carry.end_location             &lt;list&gt; &lt;NULL&gt;, &lt;NULL&gt;, &lt;NULL&gt;, &lt;NULL&gt;, &lt;NULL&gt;~
+## $ ball_receipt.outcome.id        &lt;int&gt; NA, NA, NA, NA, NA, NA, NA, NA, 9, NA, ~
+## $ ball_receipt.outcome.name      &lt;chr&gt; NA, NA, NA, NA, NA, NA, NA, NA, &quot;Incomp~
+## $ duel.type.id                   &lt;int&gt; NA, NA, NA, NA, NA, NA, NA, NA, NA, NA,~
+## $ duel.type.name                 &lt;chr&gt; NA, NA, NA, NA, NA, NA, NA, NA, NA, NA,~
+## $ duel.outcome.id                &lt;int&gt; NA, NA, NA, NA, NA, NA, NA, NA, NA, NA,~
+## $ duel.outcome.name              &lt;chr&gt; NA, NA, NA, NA, NA, NA, NA, NA, NA, NA,~
+## $ foul_committed.penalty         &lt;lgl&gt; NA, NA, NA, NA, NA, NA, NA, NA, NA, NA,~
+## $ foul_committed.advantage       &lt;lgl&gt; NA, NA, NA, NA, NA, NA, NA, NA, NA, NA,~
+## $ foul_committed.offensive       &lt;lgl&gt; NA, NA, NA, NA, NA, NA, NA, NA, NA, NA,~
+## $ foul_committed.type.id         &lt;int&gt; NA, NA, NA, NA, NA, NA, NA, NA, NA, NA,~
+## $ foul_committed.type.name       &lt;chr&gt; NA, NA, NA, NA, NA, NA, NA, NA, NA, NA,~
+## $ shot.statsbomb_xg              &lt;dbl&gt; NA, NA, NA, NA, NA, NA, NA, NA, NA, NA,~
+## $ shot.end_location              &lt;list&gt; &lt;NULL&gt;, &lt;NULL&gt;, &lt;NULL&gt;, &lt;NULL&gt;, &lt;NULL&gt;~
+## $ shot.freeze_frame              &lt;list&gt; &lt;NULL&gt;, &lt;NULL&gt;, &lt;NULL&gt;, &lt;NULL&gt;, &lt;NULL&gt;~
+## $ shot.key_pass_id               &lt;chr&gt; NA, NA, NA, NA, NA, NA, NA, NA, NA, NA,~
+## $ shot.first_time                &lt;lgl&gt; NA, NA, NA, NA, NA, NA, NA, NA, NA, NA,~
+## $ shot.aerial_won                &lt;lgl&gt; NA, NA, NA, NA, NA, NA, NA, NA, NA, NA,~
+## $ shot.technique.id              &lt;int&gt; NA, NA, NA, NA, NA, NA, NA, NA, NA, NA,~
+## $ shot.technique.name            &lt;chr&gt; NA, NA, NA, NA, NA, NA, NA, NA, NA, NA,~
+## $ shot.body_part.id              &lt;int&gt; NA, NA, NA, NA, NA, NA, NA, NA, NA, NA,~
+## $ shot.body_part.name            &lt;chr&gt; NA, NA, NA, NA, NA, NA, NA, NA, NA, NA,~
+## $ shot.type.id                   &lt;int&gt; NA, NA, NA, NA, NA, NA, NA, NA, NA, NA,~
+## $ shot.type.name                 &lt;chr&gt; NA, NA, NA, NA, NA, NA, NA, NA, NA, NA,~
+## $ shot.outcome.id                &lt;int&gt; NA, NA, NA, NA, NA, NA, NA, NA, NA, NA,~
+## $ shot.outcome.name              &lt;chr&gt; NA, NA, NA, NA, NA, NA, NA, NA, NA, NA,~
+## $ goalkeeper.end_location        &lt;list&gt; &lt;NULL&gt;, &lt;NULL&gt;, &lt;NULL&gt;, &lt;NULL&gt;, &lt;NULL&gt;~
+## $ goalkeeper.punched_out         &lt;lgl&gt; NA, NA, NA, NA, NA, NA, NA, NA, NA, NA,~
+## $ goalkeeper.position.id         &lt;int&gt; NA, NA, NA, NA, NA, NA, NA, NA, NA, NA,~
+## $ goalkeeper.position.name       &lt;chr&gt; NA, NA, NA, NA, NA, NA, NA, NA, NA, NA,~
+## $ goalkeeper.type.id             &lt;int&gt; NA, NA, NA, NA, NA, NA, NA, NA, NA, NA,~
+## $ goalkeeper.type.name           &lt;chr&gt; NA, NA, NA, NA, NA, NA, NA, NA, NA, NA,~
+## $ goalkeeper.outcome.id          &lt;int&gt; NA, NA, NA, NA, NA, NA, NA, NA, NA, NA,~
+## $ goalkeeper.outcome.name        &lt;chr&gt; NA, NA, NA, NA, NA, NA, NA, NA, NA, NA,~
+## $ goalkeeper.technique.id        &lt;int&gt; NA, NA, NA, NA, NA, NA, NA, NA, NA, NA,~
+## $ goalkeeper.technique.name      &lt;chr&gt; NA, NA, NA, NA, NA, NA, NA, NA, NA, NA,~
+## $ goalkeeper.body_part.id        &lt;int&gt; NA, NA, NA, NA, NA, NA, NA, NA, NA, NA,~
+## $ goalkeeper.body_part.name      &lt;chr&gt; NA, NA, NA, NA, NA, NA, NA, NA, NA, NA,~
+## $ clearance.head                 &lt;lgl&gt; NA, NA, NA, NA, NA, NA, NA, NA, NA, NA,~
+## $ clearance.aerial_won           &lt;lgl&gt; NA, NA, NA, NA, NA, NA, NA, NA, NA, NA,~
+## $ clearance.right_foot           &lt;lgl&gt; NA, NA, NA, NA, NA, NA, NA, NA, NA, NA,~
+## $ clearance.left_foot            &lt;lgl&gt; NA, NA, NA, NA, NA, NA, NA, NA, NA, NA,~
+## $ clearance.other                &lt;lgl&gt; NA, NA, NA, NA, NA, NA, NA, NA, NA, NA,~
+## $ clearance.body_part.id         &lt;int&gt; NA, NA, NA, NA, NA, NA, NA, NA, NA, NA,~
+## $ clearance.body_part.name       &lt;chr&gt; NA, NA, NA, NA, NA, NA, NA, NA, NA, NA,~
+## $ foul_won.advantage             &lt;lgl&gt; NA, NA, NA, NA, NA, NA, NA, NA, NA, NA,~
+## $ foul_won.defensive             &lt;lgl&gt; NA, NA, NA, NA, NA, NA, NA, NA, NA, NA,~
+## $ interception.outcome.id        &lt;int&gt; NA, NA, NA, NA, NA, NA, NA, NA, NA, NA,~
+## $ interception.outcome.name      &lt;chr&gt; NA, NA, NA, NA, NA, NA, NA, NA, NA, NA,~
+## $ ball_recovery.recovery_failure &lt;lgl&gt; NA, NA, NA, NA, NA, NA, NA, NA, NA, NA,~
+## $ dribble.overrun                &lt;lgl&gt; NA, NA, NA, NA, NA, NA, NA, NA, NA, NA,~
+## $ dribble.nutmeg                 &lt;lgl&gt; NA, NA, NA, NA, NA, NA, NA, NA, NA, NA,~
+## $ dribble.outcome.id             &lt;int&gt; NA, NA, NA, NA, NA, NA, NA, NA, NA, NA,~
+## $ dribble.outcome.name           &lt;chr&gt; NA, NA, NA, NA, NA, NA, NA, NA, NA, NA,~
+## $ `50_50.outcome.id`             &lt;int&gt; NA, NA, NA, NA, NA, NA, NA, NA, NA, NA,~
+## $ `50_50.outcome.name`           &lt;chr&gt; NA, NA, NA, NA, NA, NA, NA, NA, NA, NA,~
+## $ substitution.outcome.id        &lt;int&gt; NA, NA, NA, NA, NA, NA, NA, NA, NA, NA,~
+## $ substitution.outcome.name      &lt;chr&gt; NA, NA, NA, NA, NA, NA, NA, NA, NA, NA,~
+## $ substitution.replacement.id    &lt;int&gt; NA, NA, NA, NA, NA, NA, NA, NA, NA, NA,~
+## $ substitution.replacement.name  &lt;chr&gt; NA, NA, NA, NA, NA, NA, NA, NA, NA, NA,~
+## $ block.deflection               &lt;lgl&gt; NA, NA, NA, NA, NA, NA, NA, NA, NA, NA,~
+## $ block.offensive                &lt;lgl&gt; NA, NA, NA, NA, NA, NA, NA, NA, NA, NA,~
+## $ match_id                       &lt;int&gt; 22912, 22912, 22912, 22912, 22912, 2291~
+## $ competition_id                 &lt;int&gt; 16, 16, 16, 16, 16, 16, 16, 16, 16, 16,~
+## $ season_id                      &lt;int&gt; 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, ~
+## $ location.x                     &lt;dbl&gt; NA, NA, NA, NA, 61.0, 34.9, 34.9, 37.0,~
+## $ location.y                     &lt;dbl&gt; NA, NA, NA, NA, 41.0, 44.7, 44.7, 44.9,~
+## $ carry.end_location.x           &lt;dbl&gt; NA, NA, NA, NA, NA, NA, 37.0, NA, NA, N~
+## $ carry.end_location.y           &lt;dbl&gt; NA, NA, NA, NA, NA, NA, 44.9, NA, NA, N~
+## $ pass.end_location.x            &lt;dbl&gt; NA, NA, NA, NA, 34.9, NA, NA, 87.5, NA,~
+## $ pass.end_location.y            &lt;dbl&gt; NA, NA, NA, NA, 44.7, NA, NA, 4.4, NA, ~
+## $ shot.end_location.x            &lt;dbl&gt; NA, NA, NA, NA, NA, NA, NA, NA, NA, NA,~
+## $ shot.end_location.y            &lt;dbl&gt; NA, NA, NA, NA, NA, NA, NA, NA, NA, NA,~
+## $ shot.end_location.z            &lt;dbl&gt; NA, NA, NA, NA, NA, NA, NA, NA, NA, NA,~
+## $ shot_impact_height             &lt;dbl&gt; NA, NA, NA, NA, NA, NA, NA, NA, NA, NA,~
+## $ player.name.GK                 &lt;chr&gt; NA, NA, NA, NA, NA, NA, NA, NA, NA, NA,~
+## $ player.id.GK                   &lt;int&gt; NA, NA, NA, NA, NA, NA, NA, NA, NA, NA,~
+## $ location.x.GK                  &lt;dbl&gt; NA, NA, NA, NA, NA, NA, NA, NA, NA, NA,~
+## $ location.y.GK                  &lt;dbl&gt; NA, NA, NA, NA, NA, NA, NA, NA, NA, NA,~
+## $ DistToGoal                     &lt;dbl&gt; NA, NA, NA, NA, NA, NA, NA, NA, NA, NA,~
+## $ DistToKeeper                   &lt;dbl&gt; NA, NA, NA, NA, NA, NA, NA, NA, NA, NA,~
+## $ AngleToGoal                    &lt;dbl&gt; NA, NA, NA, NA, NA, NA, NA, NA, NA, NA,~
+## $ AngleToKeeper                  &lt;dbl&gt; NA, NA, NA, NA, NA, NA, NA, NA, NA, NA,~
+## $ AngleDeviation                 &lt;dbl&gt; NA, NA, NA, NA, NA, NA, NA, NA, NA, NA,~
+## $ avevelocity                    &lt;dbl&gt; NA, NA, NA, NA, NA, NA, NA, NA, NA, NA,~
+## $ DistSGK                        &lt;dbl&gt; NA, NA, NA, NA, NA, NA, NA, NA, NA, NA,~
+## $ density                        &lt;dbl&gt; NA, NA, NA, NA, NA, NA, NA, NA, NA, NA,~
+## $ density.incone                 &lt;dbl&gt; NA, NA, NA, NA, NA, NA, NA, NA, NA, NA,~
+## $ distance.ToD1                  &lt;dbl&gt; NA, NA, NA, NA, NA, NA, NA, NA, NA, NA,~
+## $ distance.ToD2                  &lt;dbl&gt; NA, NA, NA, NA, NA, NA, NA, NA, NA, NA,~
+## $ AttackersBehindBall            &lt;dbl&gt; NA, NA, NA, NA, NA, NA, NA, NA, NA, NA,~
+## $ DefendersBehindBall            &lt;dbl&gt; NA, NA, NA, NA, NA, NA, NA, NA, NA, NA,~
+## $ DefendersInCone                &lt;dbl&gt; NA, NA, NA, NA, NA, NA, NA, NA, NA, NA,~
+## $ InCone.GK                      &lt;dbl&gt; NA, NA, NA, NA, NA, NA, NA, NA, NA, NA,~
+## $ DefArea                        &lt;dbl&gt; NA, NA, NA, NA, NA, NA, NA, NA, NA, NA,~
+## $ distance.ToD1.360              &lt;dbl&gt; NA, NA, NA, NA, NA, NA, NA, NA, NA, NA,~
+## $ distance.ToD2.360              &lt;dbl&gt; NA, NA, NA, NA, NA, NA, NA, NA, NA, NA,~
+## $ milliseconds                   &lt;dbl&gt; 0, 0, 0, 0, 208, 875, 875, 358, 398, 39~
+## $ ElapsedTime                    &lt;dbl&gt; 0.000, 0.000, 0.000, 0.000, 0.208, 1.87~
+## $ StartOfPossession              &lt;dbl&gt; 0.000, 0.000, 0.000, 0.000, 0.208, 0.20~
+## $ TimeInPoss                     &lt;dbl&gt; 0.000, 0.000, 0.000, 0.000, 0.000, 1.66~
+## $ TimeToPossEnd                  &lt;dbl&gt; 0.000, 0.000, 0.000, 0.000, 22.763, 21.~</code></pre>
+<p>This dataset, with 157 variables and 3,165 observations, corresponds to the ‘Liv_v_Spurs_Event_Data.csv’ dataset stored in my <a href="https://github.com/buckleco/Portfolio_Data/blob/main/Liv_v_Spurs_Event_Data.csv">Github repo</a>, which I also use in some other blog posts.</p>

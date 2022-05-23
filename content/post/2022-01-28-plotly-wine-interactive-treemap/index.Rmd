@@ -1,0 +1,235 @@
+---
+title: "Build interactive Plotly treemap using Wine Enthusiast magazine data"
+author: "Conor Buckley"
+date: 2022-01-28
+categories: ["R", "Chart"]
+tags: ["R", "interactive", "plotly", "treemap", "wine"]
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE)
+```
+
+One thing that struck me while exploring the Wine Enthusiast magazine data for other posts, is that there is so much information in it. This prompted me to check out ways to produce an interactive chart, which would allow users to dig into the data themselves. The plotly R graphing library provides functionality for making interactive charts, so in this post I wrangle the wine data into a structure that allows me to easily construct an interactive plotly treemap containing countries, provinces, regions and the associated red and white wines.   
+
+Firstly, I load the libraries required for this post.
+
+```{r, warning=FALSE}
+# Load libraries required for this post
+library(tidyverse)
+library(plotly)
+library(knitr)
+```
+
+Next, I get the data from the 'Tidy Tuesday' Github repo. For more about the Tidy Tuesday project, see [this post](../2022-03-11-tidy-tuesday-project/).
+
+```{r, warning=FALSE}
+# Get the base data from the Tidy Tuesday Github repository using readr package
+# 14 variables with 129,971 observations
+wine_ratings <- readr::read_csv("https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2019/2019-05-28/winemag-data-130k-v2.csv")
+```
+
+This dataset contains nearly 130k wines that have been rated by Wine Enthusiast magazine. The ratings range from 80 points to 100 points. Each row corresponds to a wine that has been rated and contains the rating, along with information about the wine. For this chart I am interested in the country, province and region for each wine, along with its color.
+
+However, the dataset does not include a variable for wine color. Therefore, I need to create one based on the wine variety. Given the manual nature of this task (using 'case_when()'), I filter for the most popular wine varieties (ones with more than 1,000 reviews), which leaves me with 27 varieties to map to a wine color. I then join this wine_color field back to the original dataset, and I also add a plot_colors variable at the country level, which will be used when I ultimately create the chart.    
+
+```{r, warning=FALSE}
+# Filter the data to keep only grapes with more than 1000 reviews
+# Assign a wine color to each of those grape varieties
+grape_color <- wine_ratings %>%
+  count(variety) %>%
+  arrange(desc(n)) %>%
+  filter(n > 1000) %>%
+  mutate(wine_color = case_when(
+    variety == "Pinot Noir" ~ "Red",
+    variety == "Chardonnay" ~ "White",
+    variety == "Cabernet Sauvignon" ~ "Red",
+    variety == "Red Blend" ~ "Red",
+    variety == "Bordeaux-style Red Blend" ~ "Red",
+    variety == "Riesling" ~ "White",
+    variety == "Sauvignon Blanc" ~ "White",
+    variety == "Syrah" ~ "Red",
+    variety == "Merlot" ~ "Red",
+    variety == "Nebbiolo" ~ "Red",
+    variety == "Zinfandel" ~ "Red",
+    variety == "Sangiovese" ~ "Red",
+    variety == "Malbec" ~ "Red",
+    variety == "Portuguese Red" ~ "Red",
+    variety == "White Blend" ~ "White",
+    variety == "Sparkling Blend" ~ "White",
+    variety == "Tempranillo" ~ "Red",
+    variety == "Rhône-style Red Blend" ~ "Red",
+    variety == "Pinot Gris" ~ "White",
+    variety == "Champagne Blend" ~ "White",
+    variety == "Cabernet Franc" ~ "Red",
+    variety == "Grüner Veltliner" ~ "White",
+    variety == "Portuguese White" ~ "White",
+    variety == "Bordeaux-style White Blend" ~ "White",
+    variety == "Pinot Grigio" ~ "White",
+    variety == "Gamay" ~ "Red",
+    variety == "Gewürztraminer" ~ "White"
+  )) %>%
+  remove_missing() # remove 1 row with NAs (Rose)
+
+# Enhance the base dataset by adding the wine color to the dataset
+wine_ratings_color <- wine_ratings %>%
+  inner_join(grape_color) %>%
+  mutate(plot_colors = case_when( # color to distinguish countries in the plot
+    country == "US" ~ "lavender",
+    country == "France" ~ "gainsboro",
+    country == "Italy" ~ "lightblue",
+    country == "Spain" ~ "lightgreen",
+    country == "Argentina" ~ "lightgray",
+    country == "Australia" ~ "thistle"
+  ))
+```
+
+A treemap is useful for displaying large amounts of hierarchically structured data. Therefore, I need to organize the data into a hierarchy suitable for this type of visualisation. The natural levels in the data are:
+
+1. country    
+2. province   
+3. region   
+4. number of wineries producing each color of wine  
+
+In order to get the data into the necessary format, I first create a pared down dataset containing only the information I need. Then, I create a dataset for each of the four levels mentioned above, before finally chaining them all together in a final dataset.  
+
+```{r, warning=FALSE}
+# Reduce the base dataset keeping only necessary features and values
+plotly_treemap_base_data <- wine_ratings_color %>%
+  select(country, province, region_1, winery, wine_color, plot_colors) %>%
+  # I don't include the US, as it is too big for the purposes of this post
+  filter(country %in% c(
+    "France", "Italy",
+    "Spain", "Argentina", "Australia"
+  )) %>%
+  drop_na(region_1) %>% # remove about 100 rows with NA
+  group_by(country, province, region_1, wine_color, plot_colors) %>%
+  count(name = "total_wineries")
+
+# First create each nested level and then append them into one final dataset
+# There are four nested levels in total:
+# 1. country --> 2. province --> 3. region -->
+# 4. number of wineries producing each color of wine
+
+# Create the top level: countries
+country_level_1 <- plotly_treemap_base_data %>%
+  ungroup() %>%
+  group_by(country) %>%
+  mutate(
+    ids = country,
+    labels = country,
+    parents = "",
+    values = sum(total_wineries),
+    fontSize = 12,
+    colors = plot_colors
+  ) %>%
+  ungroup() %>%
+  select(ids, labels, parents, values, fontSize, colors) %>%
+  distinct()
+
+# Create the second level: province
+province_level_2 <- plotly_treemap_base_data %>%
+  ungroup() %>%
+  group_by(country, province) %>%
+  mutate(
+    ids = paste0(country, "-", province), # previous label - current label
+    labels = province,
+    parents = country, # id from country level
+    values = sum(total_wineries),
+    fontSize = 12,
+    colors = plot_colors
+  ) %>%
+  ungroup() %>%
+  select(ids, labels, parents, values, fontSize, colors) %>%
+  distinct()
+
+# Create the third level: region
+region_level_3 <- plotly_treemap_base_data %>%
+  ungroup() %>%
+  group_by(country, province, region_1) %>%
+  mutate(
+    ids = paste0(province, "-", region_1), # previous label - current label
+    labels = region_1,
+    parents = paste0(country, "-", province), # id from province level
+    values = sum(total_wineries),
+    fontSize = 12,
+    colors = plot_colors
+  ) %>%
+  ungroup() %>%
+  select(ids, labels, parents, values, fontSize, colors) %>%
+  distinct()
+
+# Create the fourth level: number of wineries producing each color of wine
+color_level_4 <- plotly_treemap_base_data %>%
+  mutate(
+    ids = paste0(region_1, "-", wine_color), # previous label - current label
+    labels = wine_color,
+    parents = paste0(province, "-", region_1), # id from region level
+    values = total_wineries,
+    fontSize = 12,
+    colors = case_when(
+      wine_color == "Red" ~ "bisque",
+      wine_color == "White" ~ "honeydew"
+    )
+  ) %>%
+  ungroup() %>%
+  select(ids, labels, parents, values, fontSize, colors)
+
+# Chain the four levels together to form the final dataset
+plotly_treemap_data_4_levels <- country_level_1 %>%
+  add_row(province_level_2) %>%
+  add_row(region_level_3) %>%
+  add_row(color_level_4)
+```
+
+See the table below for an example of how the four levels hang together. It contains the first row from each level. The 'ids' are constructed by concatenating the 'labels' from the previous level and the current level (separated by a dash). The 'parents' are simply the 'ids' from the level above. The 'values' correspond to the total number of wineries at that level. So, in the example below, there are 3,118 wineries in Argentina, 2,752 in Mendoza Province, 41 in Agrelo, of which 39 produce red wine. The 'fontsize' and 'colors' fields relate to the appearance of the chart.  
+
+```{r, echo=FALSE}
+# Create a table to demonstrate the structure of the data
+# Take the first row from each level
+table_ex_df <- as.data.frame(head(country_level_1, 1) %>%
+  add_row(head(province_level_2, 1)) %>%
+  add_row(head(region_level_3, 1)) %>%
+  add_row(head(color_level_4, 1)))
+
+# Change the row names to the level
+row.names(table_ex_df) <- c(
+  "Country Level", "Province Level",
+  "Region Level", "Color  Level"
+)
+
+# Create the table
+kable(table_ex_df, # caption = "First row of each nest level",
+  format.args = list(big.mark = ",", scientific = FALSE)
+)
+```
+
+Using the final dataset, the interactive treemap can be created using the plot_ly() function from the plotly R library. 
+
+```{r}
+# Generate the interactive treemap chart
+# country -> province -> region; sized by the numbers of wineries
+country_regions_color_plot <- plot_ly(
+  type = "treemap",
+  ids = plotly_treemap_data_4_levels$ids,
+  labels = plotly_treemap_data_4_levels$labels,
+  parents = plotly_treemap_data_4_levels$parents,
+  values = plotly_treemap_data_4_levels$values,
+  marker = list(colors = plotly_treemap_data_4_levels$colors),
+  branchvalues = "total",
+  textinfo = "label+value+percent entry",
+  domain = list(column = 0)
+)
+```
+
+It easy to drill down through the countries, provinces and regions to see the breakdown of the production of red and white wine. The chart also makes it easy to navigate back up through the levels, as well as providing tool-tips, as the user hovers over the differnt parts.  
+
+```{r, echo=FALSE}
+# ```{r, echo=FALSE, fig.height=12, fig.width=7, fig.cap="This is the caption."}
+country_regions_color_plot
+```
+
+This interactive chart effectively allows the user to explore a dataset with about 37k rows (before the data was modified to create the chart). To plot this information, a static treemap chart would require a lot more aggregation of the data, due to the sheer number of provinces and regions within each country. Clearly, the interactive treemap is a better option in this case, as it retains so much of the detail.   

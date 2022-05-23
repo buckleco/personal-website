@@ -1,0 +1,139 @@
+---
+title: "Wine Enthusiast magazine wine ratings distribution across US red wine vintages"
+author: "Conor Buckley"
+date: 2022-02-11
+categories: ["R", "Chart"]
+tags: ["R", "plot", "ggplot2", "wine"]
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+
+
+<p>I thought it would be interesting to plot some data using box plots and then to plot the same data again using a tile grid. Box plots are great to get a quick visual overview of some standard statistical properties of the data. A tile grid (also, sometimes referred to as a heatmap) can be used to tell a similar story, while adding some further granular detail. Using the wine dataset I used previously in other posts, I select the main red wine varieties produced in the US for this analysis.</p>
+<p>Firstly, I load the libraries required for this post.</p>
+<pre class="r"><code># Load libraries required for this post
+library(tidyverse)</code></pre>
+<p>Next, I get the data from the ‘Tidy Tuesday’ Github repo. For more about the Tidy Tuesday project, see <a href="../get_data_from_statsbombr/">this post</a>.</p>
+<pre class="r"><code># Get the base data from the Tidy Tuesday Github repository using readr package
+# 14 variables with 129,971 observations
+wine_ratings &lt;- read_csv(&quot;https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2019/2019-05-28/winemag-data-130k-v2.csv&quot;)</code></pre>
+<p>This dataset contains nearly 130k wines that have been rated by Wine Enthusiast magazine. The ratings range from 80 points to 100 points. Each row corresponds to a wine that has been rated and contains the rating, along with information about the wine.</p>
+<p>The vintage of the wine is not available as a variable in the dataset. However, the wine vintage is mentioned in the title of most of the wines, so I can create a new variable (‘year’) by extracting it from the title. I use ‘extract()’ from the magrittr package to do this. I also trim the dataset to include only things I need for this US red wine analysis.</p>
+<pre class="r"><code># Extract the vintage year from the title of the wine
+# Filter the data to remove variables and observations I don&#39;t need
+wr_year_red &lt;- wine_ratings %&gt;%
+  extract(title, &quot;year&quot;, &quot;(19\\d\\d|20\\d\\d)&quot;,
+    convert = TRUE, remove = FALSE
+  ) %&gt;% # extract the vintage from the wine label
+  filter(!is.na(year)) %&gt;% # removes 4,626 observations
+  filter(!year %in% c(1912, 1929)) %&gt;% # these appear erronously and only affect 14 rows
+  select(country, points, price, year, variety) %&gt;%
+  filter(country == &quot;US&quot;) %&gt;% # US wines only
+  filter(variety %in% c(
+    &quot;Pinot Noir&quot;, &quot;Cabernet Sauvignon&quot;, &quot;Syrah&quot;,
+    &quot;Red Blend&quot;, &quot;Zinfandel&quot;, &quot;Merlot&quot;
+  )) %&gt;% # popular reds
+  select(points, variety, year) %&gt;%
+  filter(year &gt; 2004 &amp; year &lt; 2016) %&gt;% # years with more than 1,000 wines
+  mutate(year = factor(year)) %&gt;%
+  remove_missing() # remove rows with NAs (113 rows)</code></pre>
+<p>Using the cleaned up dataset I create plots to display wine rating changes from 2005 to 2015. I use box plots to do this, as I feel they are a good fit for what I want to see here. The data only contains US wine and I break out the plots into six charts, one for each of the main six red wine vintages.</p>
+<pre class="r"><code># create the boxplot chart by year and points
+# break out by read wine vintage
+wr_year_red %&gt;%
+  ggplot(aes(year, points)) +
+  geom_boxplot(fill = &quot;maroon&quot;, alpha = 0.5, show.legend = FALSE) +
+  facet_wrap(~variety, ncol = 2) +
+  scale_y_continuous(
+    breaks = c(
+      80, 82, 84, 86, 88, 90,
+      92, 94, 96, 98, 100
+    ),
+    limits = c(78, 102),
+    expand = c(0, 0)
+  ) +
+  labs(
+    title = &quot;Distribution of wines produced in the US per year, per points score&quot;,
+    subtitle = &quot;Using data for the six most popular US red wine varieties.&quot;,
+    x = &quot;Wine Vintage&quot;, y = &quot;Wine Enthusiast Magazine Wine Rating&quot;
+  ) +
+  theme(
+    panel.background = element_blank(), # element_rect(fill = &quot;gray90&quot;),
+    plot.title = element_text(colour = &quot;black&quot;, hjust = 0, size = 14, face = &quot;bold&quot;),
+    plot.subtitle = element_text(colour = &quot;black&quot;, hjust = 0, size = 12),
+    axis.ticks.x = element_blank(),
+    panel.grid.major.x = element_blank(),
+    panel.grid.minor.x = element_blank(),
+    panel.grid.major.y = element_line(color = &quot;#BBBBBB&quot;),
+    panel.grid.minor.y = element_blank(),
+    axis.text.x = element_text(size = 7),
+    strip.background = element_rect(fill = &quot;white&quot;), # title area of sub charts
+    strip.text = element_text(size = 12, face = &quot;bold&quot;)
+  )</code></pre>
+<p><img src="{{< blogdown/postref >}}index_files/figure-html/unnamed-chunk-4-1.png" width="768" /></p>
+<p>The box plots show a standardized way of showing the data by displaying the minimum, maximum, median, first and third quartiles for each year, across the six red wine varieties. This makes it straightforward to make comparisons by look at the charts. For Cabernet Sauvignon, the median rating is 88 points for both 2005 and 2015, but the range of quality is much narrower for 2015. The Zinfindel variety doesn’t have many wines that are highly rated, but the quality steadily improves, with the first quartile in 2015 (88 points) greater than the median in 2005 (87 points). Likewise Syrah shows steady improvement during the time period.</p>
+<p>Another way to look at this data is to use tilegrid plots. In order to do this I need to make some enhancements to the dataset. Specifically, I get a count of the wines when the data is grouped by variety and year. Then I get a count of the wines when the data is grouped by variety, year and points. This allows me to calculate the percentage of wines for a given points level, per variety and vintage year. Therefore, the sum of the percentages across all the ratings for a specific variety and year is 100%. The last thing to do is to assign bins to group the data. I settle on five bins starting with 0%-5% and ending with 20%-25%. Five is enough to capture relevant detail, yet still make the chart easy to read.</p>
+<pre class="r"><code># Create data tibble for the tile grid chart extending wr_year_red created previously
+# Percentage of wines per points level for each year for the six main red varieties
+heat_tib &lt;- wr_year_red %&gt;%
+  group_by(variety, year) %&gt;%
+  add_count(year, name = &quot;year_tots&quot;) %&gt;% # count of wines, by variety and year
+  ungroup() %&gt;%
+  group_by(variety, year, points) %&gt;%
+  add_count(name = &quot;num_wines&quot;) %&gt;% # count of wines, by variety, year and points
+  arrange(variety, year, points) %&gt;% # order by variety, year and points
+  distinct() %&gt;% # keep only the unique rows
+  mutate(num_perc = (num_wines / year_tots)) %&gt;% # % of wines with a given points level
+  # per variety and year
+  mutate(points = factor(points, levels = (wr_year_red %&gt;%
+    select(points) %&gt;%
+    distinct() %&gt;%
+    arrange(points) %&gt;%
+    mutate(points = factor(points)) %&gt;%
+    pull(points)))) %&gt;% # order points levels chronologically
+  mutate(
+    num_cat = case_when( # assign &#39;num_perc&#39; across 5 bin categories
+      num_perc &lt; 0.05 ~ &quot;0%-5%&quot;,
+      num_perc &gt;= 0.05 &amp; num_perc &lt; 0.10 ~ &quot;5%-10%&quot;,
+      num_perc &gt;= 0.10 &amp; num_perc &lt; 0.15 ~ &quot;10%-15%&quot;,
+      num_perc &gt;= 0.15 &amp; num_perc &lt; 0.20 ~ &quot;15%-20%&quot;,
+      num_perc &gt;= 0.20 &amp; num_perc &lt; 0.25 ~ &quot;20%-25%&quot;
+    ),
+    num_cat = factor(num_cat, levels = c(
+      &quot;0%-5%&quot;, &quot;5%-10%&quot;, &quot;10%-15%&quot;,
+      &quot;15%-20%&quot;, &quot;20%-25%&quot;
+    ))
+  )</code></pre>
+<p>Now that the data is ready I can create the tilegrid chart. For the color palette I pick a range of colors from light to dark in the same shade. Naturally, the shade I use is based on the red wine color.</p>
+<pre class="r"><code># Colour palette for the 5 bin categories
+fillCol3 &lt;- c(&quot;#ffc6c4&quot;, &quot;#f4a3a8&quot;, &quot;#e38191&quot;, &quot;#ad466c&quot;, &quot;#672044&quot;)
+
+# Create a tile grid plot by year and points (ratings)
+ggplot(heat_tib, aes(x = year, y = points, fill = num_cat)) +
+  geom_tile(colour = &quot;white&quot;, size = 0.2) +
+  facet_wrap(~variety, ncol = 2) +
+  scale_fill_manual(values = fillCol3, na.value = &quot;grey90&quot;) +
+  scale_x_discrete(expand = c(0, 0)) + # remove any padding
+  scale_y_discrete(expand = c(0, 0)) + # remove any padding
+  labs(
+    title = &quot;Percentage of wines produced in the US per year, per points score&quot;,
+    subtitle = &quot;Using data for the six most popular US red wine varieties.&quot;,
+    x = &quot;Wine Vintage&quot;, y = &quot;Wine Enthusiast Magazine Wine Rating&quot;, fill = &quot;% Wines&quot;
+  ) +
+  theme(
+    panel.background = element_rect(fill = &quot;white&quot;),
+    plot.title = element_text(colour = &quot;black&quot;, hjust = 0, size = 14, face = &quot;bold&quot;),
+    plot.subtitle = element_text(colour = &quot;black&quot;, hjust = 0, size = 12),
+    axis.ticks = element_blank(),
+    axis.text.x = element_text(size = 7),
+    axis.text.y = element_text(size = 7),
+    legend.title = element_text(size = 9),
+    legend.text = element_text(size = 8),
+    strip.background = element_rect(fill = &quot;white&quot;),
+    strip.text = element_text(size = 12)
+  )</code></pre>
+<p><img src="{{< blogdown/postref >}}index_files/figure-html/unnamed-chunk-6-1.png" width="768" /></p>
+<p>For the Cabernet Sauvignon variety, the change in rating concentration can again be seen very clearly, with no more than 15% of the wines associated with any rating prior to 2012. Interestingly, for Pinot Noir, wines that were rated as outliers on the high end in 2005 in the boxplot chart above, are no longer outliers in subsequent years due to the upward movement of the majority of the ratings. The tilegrid chart demonstrates this very nicely. The upward pattern of the Syrah and Zinfandel varieties is also very clear.</p>
+<p>The box plot does a nice job of making it easy to compare patterns quickly and clearly. While, the tilegrid adds some nuance and richer information about specific rating levels.</p>

@@ -1,0 +1,52 @@
+---
+title: "A brief introduction to the 'Tidy Tuesday' project"
+subtitle: "A different dataset every Tuesday"
+author: "Conor Buckley"
+date: 2022-03-11
+categories: ["R", "Data"]
+tags: ["R", "plot", "ggplot2", "tidy tuesday"]
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, class.source = "chunk-style")
+```
+
+A number of my posts source data via the 'Tidy Tuesday' project, so I thought it would make sense for me to provide some further information on this project. Every Tuesday a new dataset is provided and people are encouraged to wrangle the data and create a visualisation using the R tidyverse (although other code based methodologies are also welcome). People can post their code and output on twitter (#TidyTuesday). The project was originally co-founded by [Thomas Mock](https://twitter.com/thomas_mock) in 2018.
+
+The [Tidy Tuesday github repository](https://github.com/rfordatascience/tidytuesday) is an excellent starting point to learn more about the project. It contains some background to the project, participant guidelines and guidance, along with all the weekly datasets.
+
+Owing to the popularity of the project, an R package, tidytuesdayR, was also developed. This allows for easy access to the datasets from within R. For example, if I wanted to access the original craft beer dataset I used in [this post](../2022-01-14-interactive-beer-reactable/), I can bring back a list of all the tidy tuesday datasets and then call the relevant dataset using the appropriate tidy tuesday date. 
+
+```{r, warning=FALSE}
+# Load tidy tuesday library
+library(tidytuesdayR)
+```
+```{r, warning=FALSE, eval=FALSE}
+# Obtain all the available tidy tuesday datasets
+# Do a check first to make sure daily query limit has not been reached
+# Note, I don't execute this code here as it returns many, many rows
+if (rate_limit_check(quiet = TRUE) > 10) {
+  all_available_datasets <- tt_available()
+  print(all_available_datasets)
+}
+```
+
+The craft beer dataset was used for Tidy Tuesday on July 10th 2018. Therefore, the dataset can be imported via the tidytuesdayR package using this date.
+
+```{r, warning=FALSE}
+# Using the tidy tuesday date sourced from the table above load the dataset
+# Do a check first to make sure daily query limit has not been reached
+if (rate_limit_check(quiet = TRUE) > 10) {
+  craft_beer_data <- tt_load("2018-07-10")
+  head(craft_beer_data$week15_beers)
+}
+```
+
+Also, I found this [R Shiny App](https://nsgrantham.shinyapps.io/tidytuesdayrocks/) useful for browsing submissions people made under the #TidyTuesday twitter hashtag. It doesn't look like it has been updated in a while, but it is still very interesting.
+
+Another good resource is this [list of youtube videos](https://www.youtube.com/playlist?list=PL19ev-r1GBwkuyiwnxoHTRC8TTqP8OEi8) by [David Robinson](https://twitter.com/drob?lang=en). In each video David takes a look at a Tidy Tuesday dataset livecoding his analysis and visualisations in R.
+
+If you are searching for inspiration for a small personal data project, then I recommend looking through the datasets in the Tidy Tuesday github repository and checking out the submissions based on those datasets under the #TidyTuesday hashtag on twitter. If you are not on Twitter, then you can access the raw tweets via the github repository. See this [article](https://themockup.blog/posts/2021-04-01-three-years-of-tidytuesday/#alt-text-for-graphs) for details on how to do that.

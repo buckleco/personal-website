@@ -1,0 +1,445 @@
+---
+title: "2019 Champions League final possession analysis"
+subtitle: "Liverpool v Tottenham Hotspur"
+author: "Conor Buckley"
+date: 2022-03-25
+categories: ["R", "Chart"]
+tags: ["R", "plot", "ggplot2", "soccer"]
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+
+
+<p>This post uses freely available Statsbomb event level data to visualize the frequency of possession changes in the 2019 Champions League final between Liverpool and Tottenham Hotspur. Liverpool won the game 2-0, but they possessed the ball for less than half the time Spurs had it.</p>
+<p>To visualize the possession events in this game I need a chart that displays how long each possession lasts and how frequently it changes between the teams. I also thought it would be interesting to include information about how often the ball was not in play. In order to do this, a significant amount of data maniputation is required before I create the chart. As a consequence this post is broken in two parts, 1) manipulating the data and 2) creating the chart.</p>
+<div id="manipulating-the-data" class="section level2">
+<h2><strong>1. Manipulating the Data</strong></h2>
+<p>Firstly, I load the required libraries for this analysis.</p>
+<pre class="r chunk-style"><code># Load required libraries
+library(tidyverse)
+library(gridExtra)
+library(grid)</code></pre>
+<p>The StatsBomb data that I use has already been processed to a certain extent. I pull the required CSV files from my GitHub repo. Please see <a href="../2022-03-18-get-data-from-statsbombr/">this post</a>, which outlines how I originally pulled the StatsBomb data using the ‘StatsBombR’ package.</p>
+<pre class="r chunk-style"><code># This dataset contains event level data for the Liverpool v Spurs 2019 Champions League final
+# 3,165 observations covering all the events that happened in the game
+# 157 features relating to passes, shots, goalkeepers, time measurement and much more
+match_1_clean &lt;- read_csv(&quot;https://raw.githubusercontent.com/buckleco/Portfolio_Data/main/Liv_v_Spurs_Event_Data.csv&quot;)
+
+# Get the high level details about each match in the StatsBomb free dataset
+matches &lt;- read_csv(&quot;https://raw.githubusercontent.com/buckleco/Portfolio_Data/main/matches.csv&quot;)</code></pre>
+<p>Before getting into the data, some variables need populating and some flags need to be set.</p>
+<pre class="r chunk-style"><code># This flag allows the annotations in the chart to be turned on or off
+annotations_on &lt;- TRUE
+
+# Set the selected match from the list of available matches
+selected_match &lt;- 1
+
+# Team Names
+home_team &lt;- matches[selected_match, ] %&gt;% pull(home_team.home_team_name)
+away_team &lt;- matches[selected_match, ] %&gt;% pull(away_team.away_team_name)
+non_event &lt;- &quot;Ball not in play&quot;
+
+# Team colours
+home_team_colour &lt;- &quot;#28383b&quot; # Navy Blue
+away_team_colour &lt;- &quot;#D62828&quot; # Red
+non_event_colour &lt;- &quot;#BBBBBB&quot; # Grey
+
+# Set the colours for the y-axis labels
+y_colour &lt;- c(away_team_colour, non_event_colour, home_team_colour)</code></pre>
+<p>Now it is time to get into the data. The first thing to do is to organize the data, so that the start and end events of a possession are retained. The events in between can be removed from the dataset. Now we have the timestamp for the beginning and end of the possession. If there is a gap in time from the end of one possesion and the beginning of the next one, then a new row needs to be added to account for the time that the ball is not in play. The dataset at the end of this step just contains the start and end times for each possession with the corresponding team, or an indicator that the ball was not in play. It is ordered chronologically with a corresponding possession number and an index value to link back to the original dataset.</p>
+<pre class="r chunk-style"><code># Examine what is happening when neither team is in possession
+# Possession analysis using addtional columns and existing columns
+poss_tib &lt;- match_1_clean %&gt;%
+  select(
+    index, timestamp, minute, second, possession, possession_team.id,
+    possession_team.name, duration, type.name, play_pattern.name,
+    ElapsedTime, StartOfPossession, TimeInPoss, TimeToPossEnd
+  ) %&gt;%
+  mutate(EventFlag = case_when(
+    TimeInPoss == 0 ~ &quot;StartTime&quot;,
+    TimeToPossEnd == 0 ~ &quot;EndTime&quot;,
+    TRUE ~ &quot;Event&quot;
+  )) %&gt;% # distinguish between first, last
+  # and middle events for a given possession
+  select(
+    possession, possession_team.name,
+    EventFlag, ElapsedTime, TimeInPoss, TimeToPossEnd
+  ) %&gt;%
+  filter(!EventFlag == &quot;Event&quot;) %&gt;% # remove the non first or last events
+  mutate(TimeDiff = (TimeInPoss - TimeToPossEnd)) %&gt;%
+  filter(!TimeDiff == 0) %&gt;% # remove the possessions that are zero seconds long
+  group_by(possession, possession_team.name, EventFlag, ElapsedTime) %&gt;%
+  count() %&gt;% # puts mutiple entries with the same ElapsedTime on the same row
+  ungroup() %&gt;%
+  select(!n) %&gt;% # remove the count
+  arrange(ElapsedTime) %&gt;% # make sure it is ordered correctly
+  pivot_wider(
+    names_from = EventFlag,
+    values_from = ElapsedTime
+  ) %&gt;% # StartTime and EndTime as columns
+  add_row(
+    possession = 0, possession_team.name = &quot;NonEvent&quot;,
+    StartTime = 0,
+    EndTime = .$StartTime[1], .before = 1
+  ) %&gt;% # insert row to start at zero
+  rowid_to_column(&quot;Index&quot;) %&gt;% # add an Index column based on the rowID
+  mutate(StartTimeValue = lag(EndTime)) %&gt;% # add non event start time value
+  mutate(DeleteFlag = &quot;Original&quot;) %&gt;%
+  group_by(Index) %&gt;% # every row has a unique Index, so groupped by each row
+  do(rbind(mutate(head(., 1),
+    possession = 0, possession_team.name = &quot;NonEvent&quot;,
+    StartTime = .$StartTimeValue, EndTime = .$StartTime,
+    DeleteFlag = &quot;New&quot;
+  ), .)) %&gt;% # insert a non-event row
+  # in between all the rows
+  ungroup() %&gt;%
+  filter(!is.na(StartTime)) %&gt;% # remove row(s) with StartTime == NA
+  mutate(DeleteValue = case_when(
+    possession_team.name != &quot;NonEvent&quot; ~ &quot;Keep&quot;,
+    possession_team.name == &quot;NonEvent&quot; &amp;
+      (StartTime - EndTime) != 0 ~ &quot;Keep&quot;,
+    TRUE ~ &quot;Delete&quot;
+  )) %&gt;% # populate flag with rows to keep
+  filter(DeleteValue == &quot;Keep&quot;) %&gt;% # keep only the Team and NonEvent &gt; 0 rows
+  select(
+    Index, possession, possession_team.name,
+    StartTime, EndTime
+  ) # select only the relevant columns</code></pre>
+<p>In the final chart, I want to split the first half possession from the possession in the second half. In order to do that, I need to know the ID of the first possession of the second half. Using the original dataset, this is easily obtained.</p>
+<pre class="r chunk-style"><code># improve on poss_plot by arranging the data into 2 halves
+# and rebalance the event start and end times at the start of the second half
+# second half starts at possession 82 (actually 81 straddles halftime)
+
+# Firstly, obtain the possession id related to half time from the original data
+ht_poss_id &lt;- match_1_clean %&gt;%
+  select(index, period, possession) %&gt;%
+  arrange(index) %&gt;% # make sure it is ordered correctly
+  filter(period == 2) %&gt;%
+  head(1) %&gt;%
+  pull(possession)</code></pre>
+<p>The starting timestamp of the second half is not at 45mins, as required for my chart, rather it contains the stoppage time from the end of the first half. Therefore, I need to obtain the adjustment amount in order to account for this later.</p>
+<pre class="r chunk-style"><code># Extract the adjustment amount to reset the start time for the second half
+# to 2,700 seconds (45min)
+adj_amt &lt;- poss_tib %&gt;%
+  filter(Index == ht_poss_id - 1) %&gt;%
+  filter(possession == 0) %&gt;%
+  pull(StartTime) - (45 * 60)</code></pre>
+<p>Using the possession ID obtained above I add a field to identify the relevant half for each observation. Then I use this field to split the dataset into two parts, one for each half.</p>
+<pre class="r chunk-style"><code># Split the data out for the first half into a mini dataset
+# Add a column for period based on the halftime poss id threshold
+poss_tib_1 &lt;- poss_tib %&gt;%
+  mutate(Period = case_when(
+    Index &lt; (ht_poss_id - 1) ~ 1,
+    Index &gt;= (ht_poss_id - 1) ~ 2
+  )) %&gt;%
+  filter(Period == 1) %&gt;% # keep the first half only
+  mutate(possession_team.name = case_when( # this will be y-axis label
+    possession_team.name == &quot;NonEvent&quot; ~ &quot;Ball not in play&quot;,
+    TRUE ~ as.character(possession_team.name)
+  ))
+
+
+# Split the data out for the second half into a mini dataset
+# Add a column for period based on the halftime poss id threshold
+poss_tib_2 &lt;- poss_tib %&gt;%
+  mutate(Period = case_when(
+    Index &lt; (ht_poss_id - 1) ~ 1,
+    Index &gt;= (ht_poss_id - 1) ~ 2
+  )) %&gt;%
+  filter(Period == 2) %&gt;% # keep the second half only
+  mutate(StartTime = (StartTime - adj_amt)) %&gt;% # adjust the StartTime,
+  # so it starts at 2,700 seconds
+  mutate(EndTime = (EndTime - adj_amt)) # adjust EndTime by the adjustment amount</code></pre>
+<p>Next, I need to extract the values I require for the third piece of the chart. Firstly, I create a small function to format how I display the time. Then, I get cumulative totals, counts and averages from the dataset. I put these numbers into one dataset. Next, I amend the data using the function created above, so that it is more nicely formatted and I also amend some column names. Lastly, I split the data into three parts, one for each team and one for when the ball is not in play.</p>
+<pre class="r chunk-style"><code># Create a function to convert seconds into &#39;mins:secs&#39; format
+mins_secs &lt;- function(t) {
+  paste(formatC(t %/% 60 %% 60, width = 2, format = &quot;d&quot;, flag = &quot;0&quot;),
+    &quot;m : &quot;,
+    formatC(t %% 60, width = 2, format = &quot;d&quot;, flag = &quot;0&quot;),
+    &quot;s&quot;,
+    sep = &quot;&quot;
+  )
+}
+
+# Get cumulative totals of time in possession / non-events for third part of chart
+poss_tib_3 &lt;- poss_tib %&gt;%
+  mutate(PossTime = EndTime - StartTime) %&gt;%
+  group_by(possession_team.name) %&gt;%
+  summarise(Totals = mins_secs(sum(PossTime))) %&gt;%
+  mutate(x_var = 1) %&gt;% # create x variable for plotting purposes
+  mutate(y_var = c(1, 2, 3)) # create y variable for plotting purposes
+
+# Get count of number of possessions
+poss_tib_3_count &lt;- poss_tib %&gt;%
+  count(possession_team.name, name = &quot;possession_count&quot;)
+
+# Get average possession time
+poss_tib_3_avg &lt;- poss_tib %&gt;%
+  mutate(PossTime = EndTime - StartTime) %&gt;%
+  group_by(possession_team.name) %&gt;%
+  summarise(avg_poss_time = mean(PossTime))
+
+# Consolidate the data for the table by joining the three stats for each team
+poss_tib_3_table &lt;- poss_tib_3 %&gt;%
+  left_join(poss_tib_3_avg) %&gt;%
+  left_join(poss_tib_3_count)
+
+# Update the data to improve the formatting,
+# change the col names and pivot the data wider
+poss_tib_3_table &lt;- poss_tib_3_table %&gt;%
+  mutate(avg_poss_time = mins_secs(avg_poss_time)) %&gt;% # change the time format
+  mutate(across(possession_count, as.character)) %&gt;% # change from int to char
+  select(possession_team.name, Totals, avg_poss_time, possession_count) %&gt;%
+  rename(c(
+    Total_Time = Totals,
+    Average_Time = avg_poss_time,
+    Total_Number_Possessions = possession_count
+  )) %&gt;%
+  pivot_longer(!possession_team.name, names_to = &quot;Stat&quot;, values_to = &quot;Values&quot;) %&gt;%
+  mutate(across(&quot;Stat&quot;, str_replace_all, &quot;_&quot;, &quot; &quot;)) # remove the underscores
+
+# Split out into three mini tables for plotting
+# Home team stats
+poss_tib_3_table_home &lt;- poss_tib_3_table %&gt;%
+  filter(possession_team.name == home_team) %&gt;%
+  select(-possession_team.name)
+poss_tib_3_table_home$Stat &lt;- str_wrap(poss_tib_3_table_home$Stat, 20) # wrap text
+
+# NonEvent stats
+poss_tib_3_table_ne &lt;- poss_tib_3_table %&gt;%
+  filter(possession_team.name == &quot;NonEvent&quot;) %&gt;%
+  select(-possession_team.name) %&gt;%
+  mutate(Stat = case_when(
+    Stat == &quot;Total Time&quot; ~ &quot;Total Time&quot;,
+    Stat == &quot;Average Time&quot; ~ &quot;Average Time&quot;,
+    Stat == &quot;Total Number Possessions&quot; ~ &quot;Total Number Occurrances&quot;
+  ))
+poss_tib_3_table_ne$Stat &lt;- str_wrap(poss_tib_3_table_ne$Stat, 20) # wrap text
+
+# Away team stats
+poss_tib_3_table_away &lt;- poss_tib_3_table %&gt;%
+  filter(possession_team.name == away_team) %&gt;%
+  select(-possession_team.name)
+poss_tib_3_table_away$Stat &lt;- str_wrap(poss_tib_3_table_away$Stat, 20) # wrap text</code></pre>
+<p>I now have six data tibbles that I use to create the chart:</p>
+<ul>
+<li>poss_tib_1 (first half data)</li>
+<li>poss_tib_2 (second half data)</li>
+<li>poss_tib_3 (overall possession stats data)</li>
+<li>poss_tib_3_table_away (away team possession stats data)</li>
+<li>poss_tib_3_table_ne (possession stats data when the ball is not in play)</li>
+<li>poss_tib_3_table_home (home team possession stats data)</li>
+</ul>
+</div>
+<div id="creating-the-chart" class="section level2">
+<h2><strong>2. Creating the chart</strong></h2>
+<p>The final chart consists of three parts joined together into one chart using the gridExtra R package. Sub-chart 1 contains the first half possessions and the y-axis labels. Sub-chart 2 contains the second half possessions, and sub-chart 3 contains the total possession stats from the game.</p>
+<pre class="r chunk-style"><code># Create the first half plot
+poss_plot_1 &lt;- poss_tib_1 %&gt;%
+  ggplot(aes(
+    x = StartTime,
+    y = factor(possession_team.name,
+      levels = c(away_team, &quot;Ball not in play&quot;, home_team)
+    ),
+    color = possession_team.name
+  )) +
+  geom_segment(aes(
+    xend = EndTime, yend = possession_team.name,
+    color = possession_team.name
+  ), size = 30)
+
+# Include the annotations if annotations flag is set to TRUE
+if (annotations_on == TRUE) {
+  poss_plot_1 &lt;- poss_plot_1 +
+    annotate(
+      geom = &quot;curve&quot;, x = 200, y = 1.4, xend = 109, yend = 1.65,
+      curvature = -.3, arrow = arrow(length = unit(2, &quot;mm&quot;))
+    ) +
+    annotate(
+      geom = &quot;text&quot;, x = 215, y = 1.4,
+      label = &quot;Salah penalty setup&quot;, hjust = &quot;left&quot;, size = 3
+    )
+}
+
+poss_plot_1 &lt;- poss_plot_1 +
+  scale_color_manual(values = setNames(
+    c(
+      home_team_colour,
+      away_team_colour,
+      non_event_colour
+    ),
+    c(home_team, away_team, &quot;Ball not in play&quot;)
+  )) +
+  scale_x_time(
+    breaks = c(0, (15 * 60), (30 * 60), (45 * 60)),
+    labels = c(0, (15), (30), (45)),
+    limits = c(min(poss_tib_1$StartTime), max(poss_tib_1$EndTime))
+  ) +
+  scale_y_discrete(labels = function(x) str_wrap(x, width = 10)) +
+  theme(
+    legend.position = &quot;none&quot;,
+    axis.title.y = element_blank(),
+    axis.text.y = element_text(colour = y_colour, size = 10),
+    # axis.text.y = element_text(colour = y_colour, size = 14),
+    axis.ticks.y = element_blank(),
+    panel.grid.major = element_blank(),
+    panel.grid.major.x = element_line(color = non_event_colour),
+    panel.grid.minor = element_blank(),
+    panel.background = element_blank()
+  ) +
+  labs(x = &quot;First Half&quot;)
+
+# Create second half plot
+poss_plot_2 &lt;- poss_tib_2 %&gt;%
+  ggplot(aes(
+    x = StartTime, y = factor(possession_team.name,
+      levels = c(away_team, &quot;NonEvent&quot;, home_team)
+    ),
+    color = possession_team.name
+  )) +
+  geom_segment(aes(
+    xend = EndTime, yend = possession_team.name,
+    color = possession_team.name
+  ), size = 30)
+# Include the annotations if annotations flag is set to TRUE
+if (annotations_on == TRUE) {
+  poss_plot_2 &lt;- poss_plot_2 +
+    annotate(
+      geom = &quot;curve&quot;, x = 4955, y = 2.5, xend = 4985, yend = 2.35,
+      curvature = -.3, arrow = arrow(length = unit(2, &quot;mm&quot;))
+    ) +
+    annotate(
+      geom = &quot;text&quot;, x = 4950, y = 2.5,
+      label = &quot;Erikson free kick setup&quot;, hjust = &quot;right&quot;, size = 3
+    ) +
+
+    annotate(
+      geom = &quot;curve&quot;, x = 5215, y = 1.4, xend = 5245, yend = 1.65,
+      curvature = .3, arrow = arrow(length = unit(2, &quot;mm&quot;))
+    ) +
+    annotate(
+      geom = &quot;text&quot;, x = 5140, y = 1.4,
+      label = &quot;Origi goal celebration&quot;, hjust = &quot;right&quot;, size = 3
+    ) +
+
+    annotate(
+      geom = &quot;curve&quot;, x = 4229, y = 1.55, xend = 4260, yend = 1.65,
+      curvature = .1, arrow = arrow(length = unit(2, &quot;mm&quot;))
+    ) +
+    annotate(
+      geom = &quot;text&quot;, x = 4860, y = 1.50,
+      label = &quot;Robinson throw in prep&quot;, hjust = &quot;right&quot;, size = 3
+    )
+}
+
+poss_plot_2 &lt;- poss_plot_2 +
+  scale_color_manual(values = setNames(
+    c(
+      home_team_colour,
+      away_team_colour,
+      non_event_colour
+    ),
+    c(home_team, away_team, &quot;NonEvent&quot;)
+  )) +
+  scale_x_time(
+    breaks = c((45 * 60), (60 * 60), (75 * 60), (90 * 60)),
+    labels = c((45), (60), (75), (90)),
+    limits = c(min(poss_tib_2$StartTime), max(poss_tib_2$EndTime))
+  ) +
+  theme(
+    legend.position = &quot;none&quot;,
+    axis.title.y = element_blank(),
+    axis.text.y = element_blank(),
+    axis.ticks.y = element_blank(),
+    panel.grid.major = element_blank(),
+    panel.grid.major.x = element_line(color = non_event_colour),
+    panel.grid.minor = element_blank(),
+    panel.background = element_blank()
+  ) +
+  labs(x = &quot;Second Half&quot;)
+
+# Set the formatting themes for the text in part 3 of the plot
+# Away team text
+tt_away &lt;- ttheme_minimal(
+  core = list(
+    bg_params = list(col = NA),
+    fg_params = list(hjust = 0, x = 0.01, col = away_team_colour, fontsize = 9)
+  )
+)
+
+# NonEvent team text
+tt_ne &lt;- ttheme_minimal(
+  core = list(
+    bg_params = list(col = NA),
+    fg_params = list(hjust = 0, x = 0.01, col = non_event_colour, fontsize = 9)
+  )
+)
+
+# Home team text
+tt_home &lt;- ttheme_minimal(
+  core = list(
+    bg_params = list(col = NA),
+    fg_params = list(hjust = 0, x = 0.01, col = home_team_colour, fontsize = 9)
+  )
+)
+
+# Create cumulative time in possession plot
+poss_plot_3 &lt;- poss_tib_3 %&gt;%
+  ggplot(aes(
+    x = x_var, y = factor(possession_team.name,
+      levels = c(away_team, &quot;NonEvent&quot;, home_team)
+    ),
+    color = possession_team.name
+  )) +
+  geom_segment(aes(
+    xend = x_var, yend = possession_team.name,
+    color = possession_team.name
+  ), size = 30) +
+  # scale_y_discrete(labels = function(x) str_wrap(x, width = 10)) +
+  annotation_custom(tableGrob(poss_tib_3_table_away,
+    theme = tt_away,
+    cols = NULL, rows = NULL
+  ),
+  xmin = 1, xmax = 1, ymin = 1, ymax = 1
+  ) +
+  annotation_custom(tableGrob(poss_tib_3_table_ne,
+    theme = tt_ne,
+    cols = NULL, rows = NULL
+  ),
+  xmin = 1, xmax = 1, ymin = 2, ymax = 2
+  ) +
+  annotation_custom(tableGrob(poss_tib_3_table_home,
+    theme = tt_home,
+    cols = NULL, rows = NULL
+  ),
+  xmin = 1, xmax = 1, ymin = 3, ymax = 3
+  ) +
+  theme(
+    legend.position = &quot;none&quot;,
+    axis.title.y = element_blank(),
+    axis.text.y = element_blank(),
+    axis.text.x = element_text(color = &quot;white&quot;),
+    axis.ticks = element_blank(),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.background = element_blank()
+  ) +
+  labs(x = &quot;Time in possession&quot;)</code></pre>
+<p>I now have three charts that need to be combined into one final chart:</p>
+<ul>
+<li>poss_plot_1 (first half chart)</li>
+<li>poss_plot_2 (second half chart)</li>
+<li>poss_plot_3 (overall possession stats chart)</li>
+</ul>
+<p>In order to combine these three charts, I use grid.arrange() from the gridExtra package.</p>
+<pre class="r chunk-style"><code># Using the gridExtra package arrange all the plots into one plot
+# grid.arrange(poss_plot_1, poss_plot_2,
+# poss_plot_3, ncol=3,widths=c(4,2.75,2.25),#c(3.5,3,1),
+grid.arrange(poss_plot_1, poss_plot_2, poss_plot_3,
+  ncol = 3, widths = c(3.8, 3.4, 1.8), # c(3.5,3,1),
+  top = textGrob(&quot;Time in possession, measured by second&quot;)
+)</code></pre>
+<p><img src="{{< blogdown/postref >}}index_files/figure-html/unnamed-chunk-10-1.png" width="672" /></p>
+</div>
