@@ -227,8 +227,8 @@ country_regions_color_plot <- plot_ly(
 
 It easy to drill down through the countries, provinces and regions to see the breakdown of the production of red and white wine. The chart also makes it easy to navigate back up through the levels, as well as providing tool-tips, as the user hovers over the differnt parts.  
 
-```{r, echo=FALSE}
-# ```{r, echo=FALSE, fig.height=12, fig.width=7, fig.cap="This is the caption."}
+```{r, echo=FALSE, out.width='100%', out.height='100%'}
+# ```{r, echo=FALSE, fig.align = 'left', fig.height=12, fig.width=7, fig.cap="This is the caption."}
 country_regions_color_plot
 ```
 
