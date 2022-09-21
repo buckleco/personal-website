@@ -1,0 +1,25 @@
+---
+title: "Embedded Shiny Map Application"
+subtitle: "Maps of Illinois Natural Hazards by County"
+author: "Conor Buckley"
+date: 2022-09-19
+slug: illinois-hazard-map-by-county
+categories: ["R", "Shiny"]
+tags: ["R", "plot", "ggplot2", "natuaral hazard", "map", "illinois", "shiny", "tigris", "leaflet"]
+runtime: shiny
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+
+
+<p>I remember noticing somewhere that it was possible to embed a Shiny application into a webpage created via the R blogdown package. I thought it would be interesting to attempt to do this for a blog post.</p>
+<p>I did some investigating and I found information <a href="https://statsandr.com/blog/how-to-embed-a-shiny-app-in-blogdown/">here</a> on how to do it. Once my Shiny application was deployed, I only needed a couple of lines of code in the R markdown webpage file to make it work.</p>
+<p>In order to create the Shiny application, I decided to leverage the map making knowledge I acquired while writing <a href="../voting-map-by-census-block-group/">this post</a>. I thought it would be nice to use Shiny to allow the user to interact with some maps by toggling between options from a drop down menu.</p>
+<p>Next, I needed some data, so I went digging around the FEMA website. FEMA (Federal Emergency Management Agency) is the U.S. government agency responsible for helping people before, during and after disasters. They publish a national risk index for natural hazards, encompassing the 18 most common natural hazards. This index is helpful to anyone who is trying to understand the natural hazard risk in a community by providing a baseline relative risk measurement for each U.S. county and census tract.</p>
+<p>FEMA also make <a href="https://hazards.fema.gov/nri/data-resources">their data</a> available at the county and census tract levels in table format (‘.csv’), which is exactly what I need for my Shiny application project. I downloaded the Illinois county level dataset. It contains a lot of modeled values around risk probabilities and associated valuations. How these numbers were created is quite <a href="https://www.fema.gov/sites/default/files/documents/fema_national-risk-index_technical-documentation.pdf">technical</a>. Therefore, the metric I selected was the annualized number of events for each natual hazard type, as this is more straightforward to understand.</p>
+<p>In order to create the Shiny application, I made two maps of Illinois using shapefiles from the tigris package. I joined these maps to the Illinois FEMA data at the county level. Then I made a couple of tab panels in Shiny to view the maps based on the natural disaster type. Once I was happy with it, I deployed it to <a href="https://buckleco.shinyapps.io/IllinoisHazardMaps_2/">shinyapps.io</a>.</p>
+<iframe height="800" width="100%" frameborder="no" src="https://buckleco.shinyapps.io/IllinoisHazardMaps_2/">
+</iframe>
+<p>I have used Shiny before for a couple of small projects, so it didn’t take me too long to make this application. However, my knowledge of Shiny at the moment doesn’t extend too much beyond this. I would really like to dedicate some time to building a comprehensive Shiny application, to further my knowledge in this area. It is definitely on my to do list, so it is likely that I’ll tackle this at some point in the future. I’ll make sure to write a few posts about the process when I do.</p>
