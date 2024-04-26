@@ -48,7 +48,7 @@ social:
 
 - icon: twitter
   icon_pack: fab
-  link: https://twitter.com/ConorConorbucks
+  link: https://twitter.com/
   label: Follow me on Twitter
   display:
     header: false
@@ -60,7 +60,7 @@ social:
   link: https://github.com/buckleco
 #- icon: linkedin
 #  icon_pack: fab
-#  link: https://www.linkedin.com/
+#  link: https://www.linkedin.com/in/conor-g-buckley
 
 # Link to a PDF of your resume/CV.
 # To use: copy your resume to `static/media/resume.pdf`, enable `ai` icons in `params.toml`, 
